@@ -8,6 +8,10 @@ use byteflow::{HostAwaitOp, Value};
 use crate::CancellationToken;
 
 /// Command accepted by a host driver through the fast, non-blocking path.
+///
+/// Built-in variants cover the standard I/O natives (`io_gpio_write`,
+/// `io_mqtt_publish_fast`, `io_uart_write_fast`). Use [`IoCommand::Custom`]
+/// for host-specific operations without extending this enum.
 #[derive(Clone, Debug, PartialEq)]
 pub enum IoCommand {
     /// Queue a GPIO output change.
@@ -27,6 +31,11 @@ pub enum IoCommand {
     ///
     /// The command ID is returned before transmission completes.
     UartWrite { port: String, bytes: Vec<u8> },
+    /// Host-defined command that does not map to a built-in native.
+    ///
+    /// `op` is an application discriminator; `args` carries any Byteflow
+    /// value the host driver understands.
+    Custom { op: u32, args: Value },
 }
 
 /// Error returned by a host I/O adapter.
