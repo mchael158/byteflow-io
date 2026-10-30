@@ -1,5 +1,9 @@
+//! Bounded command queue implementing [`IoDriver`] for the fast path.
+
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{sync_channel, Receiver, RecvError, RecvTimeoutError, SyncSender, TryRecvError, TrySendError};
+use std::sync::mpsc::{
+    sync_channel, Receiver, RecvError, RecvTimeoutError, SyncSender, TryRecvError, TrySendError,
+};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -7,15 +11,21 @@ use byteflow::{HostAwaitOp, Value};
 
 use crate::{CancellationToken, IoCommand, IoDriver, IoDriverError};
 
-/// A fast I/O command together with the host-side ID returned to bytecode.
+/// Fast-path command paired with the host-side ID returned to bytecode.
 #[derive(Clone, Debug, PartialEq)]
 pub struct QueuedCommand {
+    /// Identifier previously returned by [`IoDriver::try_submit`].
     pub id: u64,
+    /// Command payload to execute on a host-owned device thread.
     pub command: IoCommand,
 }
 
 /// Host-specific executor for slow operations reached through `HostAwait`.
+///
+/// Keeps provider SDKs out of the integration crate while allowing
+/// [`QueuedIoDriver`] to delegate the slow path.
 pub trait HostAwaitHandler: Send + Sync + std::fmt::Debug + 'static {
+    /// Run one HostAwait operation to completion or cooperative cancellation.
     fn execute(
         &self,
         op: HostAwaitOp,
@@ -23,6 +33,7 @@ pub trait HostAwaitHandler: Send + Sync + std::fmt::Debug + 'static {
         cancel: &CancellationToken,
     ) -> Result<Value, IoDriverError>;
 
+    /// Release resources owned by the slow-path handler.
     fn shutdown(&self) -> Result<(), IoDriverError> {
         Ok(())
     }
@@ -40,8 +51,11 @@ impl std::fmt::Debug for IoCommandReceiver {
 }
 
 impl IoCommandReceiver {
-    /// Wait for one command. This is intended for a host-owned driver thread,
-    /// never for a Byteflow worker.
+    /// Block until the next command arrives.
+    ///
+    /// Intended for a host-owned driver thread — never a Byteflow worker.
+    /// Prefer [`recv_timeout`](Self::recv_timeout) when shutdown must remain
+    /// interruptible.
     pub fn recv(&self) -> Result<QueuedCommand, RecvError> {
         match self.receiver.lock() {
             Ok(receiver) => receiver.recv(),
@@ -49,7 +63,7 @@ impl IoCommandReceiver {
         }
     }
 
-    /// Wait for one command up to `timeout` on a host-owned driver thread.
+    /// Wait up to `timeout` for the next command on a host-owned driver thread.
     pub fn recv_timeout(&self, timeout: Duration) -> Result<QueuedCommand, RecvTimeoutError> {
         match self.receiver.lock() {
             Ok(receiver) => receiver.recv_timeout(timeout),
@@ -66,12 +80,15 @@ impl IoCommandReceiver {
     }
 }
 
-/// A ready-to-use bounded `IoDriver` implementation.
+/// Ready-to-use bounded [`IoDriver`] for the fast command path.
 ///
-/// It provides the non-blocking fast-command queue. The application consumes
+/// Provides a non-blocking enqueue API. The application consumes
 /// [`IoCommandReceiver`] on its own MQTT/UART/GPIO thread and performs the
 /// concrete device operation there. Slow request/response work is delegated to
 /// [`HostAwaitHandler`].
+///
+/// [`QueuedIoDriver::shutdown`] rejects new submissions; it does not join the
+/// application’s device consumer thread.
 pub struct QueuedIoDriver {
     sender: SyncSender<QueuedCommand>,
     next_id: AtomicU64,
@@ -89,12 +106,18 @@ impl std::fmt::Debug for QueuedIoDriver {
 
 impl QueuedIoDriver {
     /// Create a bounded driver queue and return its host-side receiver.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IoDriverError`] when `capacity` is zero.
     pub fn new(
         capacity: usize,
         host_await: Arc<dyn HostAwaitHandler>,
     ) -> Result<(Arc<Self>, IoCommandReceiver), IoDriverError> {
         if capacity == 0 {
-            return Err(IoDriverError::new("I/O command queue capacity must be greater than zero"));
+            return Err(IoDriverError::new(
+                "I/O command queue capacity must be greater than zero",
+            ));
         }
 
         let (sender, receiver) = sync_channel(capacity);
@@ -119,7 +142,9 @@ impl IoDriver for QueuedIoDriver {
 
         let id = self
             .next_id
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| current.checked_add(1))
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                current.checked_add(1)
+            })
             .map_err(|_| IoDriverError::new("I/O command ID space exhausted"))?;
 
         match self.sender.try_send(QueuedCommand { id, command }) {

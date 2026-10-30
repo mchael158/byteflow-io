@@ -1,14 +1,33 @@
 #![deny(unsafe_code)]
 
-//! Host-side I/O integration for Byteflow.
+//! Host-side I/O integration for the Byteflow runtime.
 //!
-//! This crate deliberately does not add I/O instructions to the Byteflow ISA.
-//! It provides bounded host queues, fast non-blocking native functions,
-//! `HostAwaitBridge` execution, and inbound event helpers.
+//! # Role
 //!
-//! The host owns concrete MQTT/UART/GPIO/payment clients. A driver implements
-//! [`IoDriver`] and is responsible for making [`IoDriver::try_submit`] bounded
-//! and non-blocking.
+//! This crate does **not** extend the Byteflow ISA with I/O opcodes. It
+//! provides:
+//!
+//! - bounded host command queues for fast `CallNative` adapters;
+//! - a dedicated [`HostAwaitBridge`] worker pool for slow external work;
+//! - helpers that inject inbound events as Atomic Hop [`byteflow::Value::Message`] values.
+//!
+//! Concrete MQTT, UART, GPIO, and payment clients remain in the host
+//! application. Implement [`IoDriver`] so that [`IoDriver::try_submit`] is
+//! bounded and non-blocking.
+//!
+//! # Dependency direction
+//!
+//! ```text
+//! byteflow-io ──► byteflow
+//! ```
+//!
+//! The core never depends on this crate.
+//!
+//! # Shutdown
+//!
+//! 1. Stop external callbacks and host-owned device consumer loops.
+//! 2. Call [`byteflow::Runtime::shutdown`].
+//! 3. Call [`ByteflowIo::shutdown`].
 
 mod bridge;
 mod driver;
@@ -24,11 +43,18 @@ pub use events::{event_tag, EventRouter};
 pub use native_table::{build_native_table, native_index};
 pub use queue::{HostAwaitHandler, IoCommandReceiver, QueuedCommand, QueuedIoDriver};
 
-/// Suggested host-owned `HostAwaitOp` values. These are not ISA opcodes.
+/// Suggested host-owned [`byteflow::HostAwaitOp`] discriminators.
+///
+/// These values are application protocol IDs consumed by
+/// [`IoDriver::execute_host_await`]. They are **not** bytecode opcodes.
 pub mod host_op {
+    /// Publish to MQTT and wait for broker acknowledgement.
     pub const MQTT_PUBLISH_AND_WAIT_ACK: u32 = 1;
+    /// Query a payment provider for transaction status.
     pub const PAYMENT_STATUS: u32 = 2;
+    /// Start a machine cycle and wait for completion.
     pub const START_MACHINE_CYCLE_AND_WAIT: u32 = 3;
+    /// Transfer one ESP OTA firmware chunk and wait for acknowledgement.
     pub const ESP_OTA_CHUNK: u32 = 4;
 }
 
@@ -36,19 +62,20 @@ use std::sync::Arc;
 
 use byteflow::{HostAwaitBridge, OutputSink, RuntimeConfig};
 
-/// Default process-wide host-await limit used by this integration layer.
+/// Default process-wide HostAwait ticket limit applied by [`IoConfig::default`].
 pub const DEFAULT_MAX_HOST_AWAITS: u32 = 128;
 
-/// Configuration for the I/O bridge owned by the host process.
+/// Configuration for the host-owned I/O bridge.
 #[derive(Clone, Debug)]
 pub struct IoConfig {
-    /// Number of dedicated host I/O workers. These are not Byteflow workers.
+    /// Number of dedicated host I/O worker threads (not Byteflow workers).
     pub worker_threads: usize,
-    /// Maximum number of queued host-await jobs waiting for a worker.
+    /// Maximum number of HostAwait jobs waiting for a free worker.
     pub queue_capacity: usize,
-    /// Maximum number of outstanding HostAwait operations allowed by Byteflow.
+    /// Process-wide outstanding HostAwait ticket limit forwarded to Byteflow
+    /// (`0` = unlimited).
     pub max_host_awaits: u32,
-    /// Name prefix used for host I/O worker threads.
+    /// Thread-name prefix for host I/O workers (`{prefix}-{index}`).
     pub thread_name: String,
 }
 
@@ -63,11 +90,11 @@ impl Default for IoConfig {
     }
 }
 
-/// Host-side integration object. It does not own the Byteflow `Runtime`.
+/// Host integration handle. Does not own the Byteflow [`byteflow::Runtime`].
 ///
-/// Keep this object alive for as long as the runtime can execute `HostAwait`.
-/// Shutdown order is: stop external driver input, call `Runtime::shutdown()`,
-/// then call [`ByteflowIo::shutdown`].
+/// Keep this value alive for as long as the runtime may execute `HostAwait`.
+/// Preferred shutdown sequence: stop external driver input, call
+/// `Runtime::shutdown()`, then [`ByteflowIo::shutdown`].
 pub struct ByteflowIo {
     driver: Arc<dyn IoDriver>,
     bridge: Arc<WorkerHostAwaitBridge>,
@@ -84,6 +111,11 @@ impl std::fmt::Debug for ByteflowIo {
 
 impl ByteflowIo {
     /// Create the host I/O bridge and its bounded worker pool.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IoInitError`] when `worker_threads` or `queue_capacity` is
+    /// zero, or when a worker thread cannot be spawned.
     pub fn new(driver: Arc<dyn IoDriver>, config: IoConfig) -> Result<Self, IoInitError> {
         let bridge = Arc::new(WorkerHostAwaitBridge::new(
             Arc::clone(&driver),
@@ -99,15 +131,15 @@ impl ByteflowIo {
         })
     }
 
-    /// Return the bridge as Byteflow's public trait object.
+    /// Return the bridge as Byteflow’s [`HostAwaitBridge`] trait object.
     pub fn host_await_bridge(&self) -> Arc<dyn HostAwaitBridge> {
         self.bridge.clone()
     }
 
-    /// Build a `RuntimeConfig` connected to this bridge.
+    /// Build a [`RuntimeConfig`] wired to this bridge and the given output sink.
     ///
-    /// Pass the same output sink to [`build_native_table`] so the standard
-    /// `print` native and the runtime configuration share one sink.
+    /// Pass the same sink to [`build_native_table`] so the standard `print`
+    /// native and the runtime share one destination.
     pub fn runtime_config(&self, output: Arc<dyn OutputSink>) -> RuntimeConfig {
         RuntimeConfig {
             host_await: Some(self.host_await_bridge()),
@@ -117,16 +149,20 @@ impl ByteflowIo {
         }
     }
 
-    /// Access the configured driver as a trait object.
+    /// Shared driver used by both fast natives and HostAwait workers.
     pub fn driver(&self) -> &Arc<dyn IoDriver> {
         &self.driver
     }
 
-    /// Stop accepting bridge work, drain already queued jobs, join workers,
-    /// then ask the driver to shut down.
+    /// Refuse new bridge work, drain accepted jobs, join workers, then shut
+    /// down the driver.
     ///
-    /// Call this only after `Runtime::shutdown()` has completed. The driver is
-    /// shared with the native functions and should not be stopped earlier.
+    /// Call only after [`byteflow::Runtime::shutdown`] has completed. The
+    /// driver is shared with native functions and must not be stopped earlier.
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`IoDriverError`] from [`IoDriver::shutdown`].
     pub fn shutdown(&self) -> Result<(), IoDriverError> {
         self.bridge.shutdown();
         self.driver.shutdown()
@@ -135,8 +171,8 @@ impl ByteflowIo {
 
 impl Drop for ByteflowIo {
     fn drop(&mut self) {
-        // Drop is a best-effort safety net. Call `shutdown` explicitly to
-        // observe errors and to make the runtime/driver ordering deliberate.
+        // Best-effort safety net. Prefer an explicit `shutdown` so errors and
+        // runtime/driver ordering remain observable.
         self.bridge.shutdown();
     }
 }

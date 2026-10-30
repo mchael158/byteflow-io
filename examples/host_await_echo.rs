@@ -1,3 +1,9 @@
+//! Minimal HostAwait round-trip through `byteflow-io`.
+//!
+//! Spawns a flow that awaits a host operation; the demo driver echoes the
+//! input integer incremented by one. Demonstrates wiring
+//! [`byteflow_io::ByteflowIo`] into [`byteflow::Runtime`].
+
 use std::sync::Arc;
 
 use byteflow::{FlowOutcome, HostAwaitOp, NullSink, Program, Runtime, Value};

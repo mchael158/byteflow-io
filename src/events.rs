@@ -1,19 +1,30 @@
+//! Trusted host → flow event delivery via Atomic Hop messages.
+
 use byteflow::{FlowId, Message, Runtime, SendError, Value};
 
 /// Helper for injecting driver events into a Byteflow flow.
+///
+/// Always delivers [`Value::Message`]. Bare scalars violate Atomic Hop rules
+/// and are rejected by [`Runtime::send`].
 pub struct EventRouter<'runtime> {
     runtime: &'runtime Runtime,
 }
 
 impl<'runtime> EventRouter<'runtime> {
+    /// Borrow a running runtime for trusted host-side delivery.
     pub fn new(runtime: &'runtime Runtime) -> Self {
         Self { runtime }
     }
 
-    /// Deliver an event through the trusted host path.
+    /// Deliver an event through the authenticated host send path.
     ///
-    /// `Runtime::send` authenticates the host as sender and enforces the
-    /// Atomic Hop rule. This method never sends a bare scalar.
+    /// The runtime stamps host sender identity. `target` must come from
+    /// trusted host bookkeeping — never from untrusted bytecode in a
+    /// multi-tenant embedding.
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`SendError`] from [`Runtime::send`].
     pub fn send(
         &self,
         target: FlowId,
@@ -26,11 +37,17 @@ impl<'runtime> EventRouter<'runtime> {
     }
 }
 
-/// Suggested application event tags. Reserve Byteflow's system tags and keep
-/// application tags stable when `.bf` modules are flashed independently.
+/// Suggested application event tags.
+///
+/// Keep values stable when `.bf` modules are flashed independently of the
+/// host. Avoid colliding with Byteflow system tags (`TAG_SYS_*`).
 pub mod event_tag {
+    /// Coin or credit accepted by the payment front-end.
     pub const COIN_INSERTED: u16 = 10;
+    /// Machine cycle finished successfully.
     pub const CYCLE_COMPLETED: u16 = 11;
+    /// Machine reported a fault condition.
     pub const MACHINE_FAULT: u16 = 12;
+    /// ESP acknowledged a previously issued command.
     pub const ESP_COMMAND_ACK: u16 = 13;
 }

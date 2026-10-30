@@ -1,3 +1,5 @@
+//! Native table composition: Byteflow slots `0..=7` plus I/O slots `8..=10`.
+
 use std::sync::Arc;
 
 use byteflow::{
@@ -7,29 +9,38 @@ use byteflow::{
 
 use crate::{IoCommand, IoDriver, NativeTableBuildError};
 
-/// Stable native indices: Byteflow `0..=7`, then this crate from slot 8.
+/// Stable `CallNative` indices.
 ///
 /// Standard slots are re-exported from [`byteflow::std_native`] so they cannot
-/// drift from the core ABI. Do not renumber existing values.
+/// drift from the core ABI. Existing values must never be renumbered; append
+/// only.
 pub mod native_index {
     pub use byteflow::std_native::{
         MAKE_MSG, MSG_PAYLOAD, MSG_REPLY_CAP, MSG_REQUEST_ID, MSG_SENDER, MSG_TAG, NOW_MS, PRINT,
     };
 
-    /// First slot available to this integration crate.
+    /// First slot reserved for this integration crate.
     pub const FIRST_BYTEFLOW_IO: u32 = 8;
 
+    /// `io_gpio_write` — enqueue a GPIO write.
     pub const GPIO_WRITE: u32 = 8;
+    /// `io_mqtt_publish_fast` — enqueue an MQTT publish without waiting for ACK.
     pub const MQTT_PUBLISH_FAST: u32 = 9;
+    /// `io_uart_write_fast` — enqueue a UART write without waiting for TX done.
     pub const UART_WRITE_FAST: u32 = 10;
 }
 
-/// Compose Byteflow's eight standard natives with the fast I/O natives.
+/// Compose Byteflow’s eight standard natives with the fast I/O natives.
 ///
-/// The standard `NativeTable` is immutable and `NativeTableBuilder` starts
-/// empty. Therefore this function copies the callable standard entries into a
-/// fresh builder before appending slots 8..=10. No standard slot is renumbered
+/// The standard [`NativeTable`] is immutable and [`NativeTableBuilder`] starts
+/// empty, so this function copies the callable standard entries into a fresh
+/// builder before registering slots `8..=10`. No standard slot is renumbered
 /// or left unregistered.
+///
+/// # Errors
+///
+/// Returns [`NativeTableBuildError`] when a standard native is missing or a
+/// registration is rejected by the builder.
 pub fn build_native_table(
     driver: Arc<dyn IoDriver>,
     output: Arc<dyn OutputSink>,
@@ -57,18 +68,14 @@ pub fn build_native_table(
     }
 
     let gpio_driver = Arc::clone(&driver);
-    builder = builder.register_at(
-        native_index::GPIO_WRITE,
-        "io_gpio_write",
-        move |args| {
-            let pin = expect_u32(args, 0, "io_gpio_write")?;
-            let high = expect_bool_or_int(args, 1, "io_gpio_write")?;
-            let command_id = gpio_driver
-                .try_submit(IoCommand::GpioWrite { pin, high })
-                .map_err(|error| native_fault("io_gpio_write", error.to_string()))?;
-            command_id_value(command_id, "io_gpio_write")
-        },
-    )?;
+    builder = builder.register_at(native_index::GPIO_WRITE, "io_gpio_write", move |args| {
+        let pin = expect_u32(args, 0, "io_gpio_write")?;
+        let high = expect_bool_or_int(args, 1, "io_gpio_write")?;
+        let command_id = gpio_driver
+            .try_submit(IoCommand::GpioWrite { pin, high })
+            .map_err(|error| native_fault("io_gpio_write", error.to_string()))?;
+        command_id_value(command_id, "io_gpio_write")
+    })?;
 
     let mqtt_driver = Arc::clone(&driver);
     builder = builder.register_at(
@@ -86,7 +93,11 @@ pub fn build_native_table(
             }
 
             let command_id = mqtt_driver
-                .try_submit(IoCommand::MqttPublish { topic, payload, qos })
+                .try_submit(IoCommand::MqttPublish {
+                    topic,
+                    payload,
+                    qos,
+                })
                 .map_err(|error| native_fault("io_mqtt_publish_fast", error.to_string()))?;
             command_id_value(command_id, "io_mqtt_publish_fast")
         },

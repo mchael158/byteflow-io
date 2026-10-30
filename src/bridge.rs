@@ -1,3 +1,9 @@
+//! Bounded [`byteflow::HostAwaitBridge`] backed by a fixed host worker pool.
+//!
+//! `submit` never blocks a Byteflow worker: jobs enter a bounded channel or
+//! fail immediately. Slow work runs on dedicated threads owned by this
+//! module. Completions are settled through [`byteflow::finish_host_await`].
+
 use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -6,19 +12,24 @@ use std::sync::{Arc, Mutex, Weak};
 use std::thread::{self, JoinHandle};
 
 use byteflow::{
-    finish_host_await, FlowId, HostAwaitBridge, HostAwaitCompleter, HostAwaitOp,
-    HostAwaitRequest,
+    finish_host_await, FlowId, HostAwaitBridge, HostAwaitCompleter, HostAwaitOp, HostAwaitRequest,
 };
 
 use crate::{IoDriver, IoDriverError, IoInitError};
 
-/// Cooperative cancellation signal passed to host drivers.
+/// Cooperative cancellation flag observed by host drivers during HostAwait work.
+///
+/// The flag alone does not close sockets or abort OS calls. Drivers must poll
+/// [`CancellationToken::is_cancelled`] between blocking steps and apply their
+/// own deadlines.
 #[derive(Clone, Debug, Default)]
 pub struct CancellationToken {
     cancelled: Arc<AtomicBool>,
 }
 
 impl CancellationToken {
+    /// Returns `true` after the runtime cancelled this ticket or the bridge
+    /// received [`HostAwaitBridge::cancel`].
     pub fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::Acquire)
     }
@@ -131,7 +142,7 @@ impl WorkerPool {
         }
 
         // Dropping the last sender closes the channel. Workers finish queued
-        // jobs and then exit when recv() returns Disconnected.
+        // jobs, then exit when `recv` returns `Disconnected`.
         let sender = match self.sender.lock() {
             Ok(mut guard) => guard.take(),
             Err(poisoned) => poisoned.into_inner().take(),
@@ -145,7 +156,7 @@ impl WorkerPool {
 
         let current = thread::current().id();
         for worker in workers {
-            // Calling shutdown from one of our own workers must not self-join.
+            // Do not self-join when shutdown is invoked from a worker thread.
             if worker.thread().id() != current {
                 let _ = worker.join();
             }
@@ -157,8 +168,12 @@ impl Drop for WorkerPool {
     fn drop(&mut self) {
         self.closed.store(true, Ordering::Release);
         match self.sender.get_mut() {
-            Ok(sender) => { sender.take(); }
-            Err(poisoned) => { poisoned.into_inner().take(); }
+            Ok(sender) => {
+                sender.take();
+            }
+            Err(poisoned) => {
+                poisoned.into_inner().take();
+            }
         }
         let workers = match self.workers.get_mut() {
             Ok(workers) => std::mem::take(workers),
@@ -178,7 +193,11 @@ enum QueueSubmitError {
     Closed(Job),
 }
 
-/// A bounded, dedicated worker bridge for Byteflow's `HostAwait` opcode.
+/// Bounded host worker pool implementing Byteflow’s [`HostAwaitBridge`].
+///
+/// Suitable as [`byteflow::RuntimeConfig::host_await`]. Queue saturation and
+/// shutdown fail the outstanding completer immediately instead of blocking a
+/// scheduler worker.
 pub struct WorkerHostAwaitBridge {
     pool: WorkerPool,
     cancellations: Arc<Mutex<HashMap<AwaitKey, Weak<AtomicBool>>>>,
@@ -193,6 +212,13 @@ impl std::fmt::Debug for WorkerHostAwaitBridge {
 }
 
 impl WorkerHostAwaitBridge {
+    /// Spawn `worker_count` host threads behind a channel of `queue_capacity`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IoInitError`] when either capacity is zero or thread creation
+    /// fails. On spawn failure, already-started workers are joined before the
+    /// error is returned.
     pub fn new(
         driver: Arc<dyn IoDriver>,
         worker_count: usize,
@@ -208,10 +234,13 @@ impl WorkerHostAwaitBridge {
             Arc::clone(&cancellations),
         )?;
 
-        Ok(Self { pool, cancellations })
+        Ok(Self {
+            pool,
+            cancellations,
+        })
     }
 
-    /// Stop queue admission and drain accepted work before joining workers.
+    /// Refuse new submissions, drain accepted work, and join worker threads.
     pub fn shutdown(&self) {
         self.pool.shutdown();
     }
@@ -291,7 +320,9 @@ fn worker_loop(
         };
 
         let result = if job.token.is_cancelled() || job.completer.is_cancelled() {
-            Err(IoDriverError::new("HostAwait operation cancelled before execution"))
+            Err(IoDriverError::new(
+                "HostAwait operation cancelled before execution",
+            ))
         } else {
             match catch_unwind(AssertUnwindSafe(|| {
                 driver.execute_host_await(job.request.op, job.request.args.clone(), &job.token)
@@ -301,12 +332,9 @@ fn worker_loop(
             }
         };
 
-        // Prefer the core helper so cancel/stale races match Byteflow's contract
-        // (`finish_host_await` → Stale when the ticket was already finalized).
-        let _ = finish_host_await(
-            job.completer,
-            result.map_err(|error| error.to_string()),
-        );
+        // Settle through the core helper so cancel/stale races match Byteflow
+        // (`Stale` when the ticket was already finalized).
+        let _ = finish_host_await(job.completer, result.map_err(|error| error.to_string()));
 
         if let Ok(mut entries) = cancellations.lock() {
             entries.remove(&job.key);
