@@ -1,0 +1,19 @@
+[package]
+name = "byteflow-io"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "MIT OR Apache-2.0"
+description = "Host-side I/O integration layer for the Byteflow runtime"
+repository = "https://github.com/mchael158/byteflow-io"
+
+[dependencies]
+# Aligned with byteflow-actors 0.9.21+ (lib `byteflow`). Prefer the git source
+# for this standalone repo. Inside the Byteflow workspace use:
+#   byteflow-actors = { path = "../byteflow" }
+byteflow-actors = { git = "https://github.com/mchael158/byteflow-actors.git" }
+
+[dev-dependencies]
+
+[features]
+default = []
