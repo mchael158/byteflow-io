@@ -1,20 +1,23 @@
 //! Bounded [`byteflow::HostAwaitBridge`] backed by a fixed host worker pool.
 //!
-//! `submit` never blocks a Byteflow worker: jobs enter a bounded channel or
-//! fail immediately. Slow work runs on dedicated threads owned by this
-//! module. Completions are settled through [`byteflow::finish_host_await`].
+//! Jobs sit in an MPMC bounded queue (`Mutex` + `Condvar` + `VecDeque`). Any
+//! idle worker may take the next job — `worker_threads > 1` is true
+//! parallelism, not a mutex around a single `mpsc::Receiver`.
+//!
+//! `submit` never blocks a Byteflow worker: the job is accepted or rejected
+//! immediately. Completions settle through [`byteflow::finish_host_await`].
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::thread::{self, JoinHandle};
 
 use byteflow::{
     finish_host_await, FlowId, HostAwaitBridge, HostAwaitCompleter, HostAwaitOp, HostAwaitRequest,
 };
 
+use crate::metrics::IoMetrics;
 use crate::{IoDriver, IoDriverError, IoInitError};
 
 /// Cooperative cancellation flag observed by host drivers during HostAwait work.
@@ -53,8 +56,77 @@ struct Job {
     key: AwaitKey,
 }
 
+struct QueueState {
+    jobs: VecDeque<Job>,
+    capacity: usize,
+    closed: bool,
+}
+
+/// Multi-producer / multi-consumer bounded job queue.
+struct JobQueue {
+    state: Mutex<QueueState>,
+    has_job: Condvar,
+}
+
+impl JobQueue {
+    fn new(capacity: usize) -> Self {
+        Self {
+            state: Mutex::new(QueueState {
+                jobs: VecDeque::with_capacity(capacity),
+                capacity,
+                closed: false,
+            }),
+            has_job: Condvar::new(),
+        }
+    }
+
+    fn try_push(&self, job: Job) -> Result<(), QueueSubmitError> {
+        let mut state = match self.state.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if state.closed {
+            return Err(QueueSubmitError::Closed(job));
+        }
+        if state.jobs.len() >= state.capacity {
+            return Err(QueueSubmitError::Full(job));
+        }
+        state.jobs.push_back(job);
+        self.has_job.notify_one();
+        Ok(())
+    }
+
+    fn pop_wait(&self) -> Option<Job> {
+        let mut state = match self.state.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        loop {
+            if let Some(job) = state.jobs.pop_front() {
+                return Some(job);
+            }
+            if state.closed {
+                return None;
+            }
+            state = match self.has_job.wait(state) {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+        }
+    }
+
+    fn close(&self) {
+        let mut state = match self.state.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        state.closed = true;
+        self.has_job.notify_all();
+    }
+}
+
 struct WorkerPool {
-    sender: Mutex<Option<SyncSender<Job>>>,
+    queue: Arc<JobQueue>,
     workers: Mutex<Vec<JoinHandle<()>>>,
     closed: AtomicBool,
 }
@@ -74,6 +146,7 @@ impl WorkerPool {
         queue_capacity: usize,
         thread_name: &str,
         cancellations: Arc<Mutex<HashMap<AwaitKey, Weak<AtomicBool>>>>,
+        metrics: Arc<IoMetrics>,
     ) -> Result<Self, IoInitError> {
         if worker_count == 0 {
             return Err(IoInitError::ZeroWorkers);
@@ -82,24 +155,29 @@ impl WorkerPool {
             return Err(IoInitError::ZeroQueueCapacity);
         }
 
-        let (sender, receiver) = sync_channel::<Job>(queue_capacity);
-        let receiver = Arc::new(Mutex::new(receiver));
+        let queue = Arc::new(JobQueue::new(queue_capacity));
         let mut workers = Vec::with_capacity(worker_count);
 
         for index in 0..worker_count {
-            let worker_receiver = Arc::clone(&receiver);
+            let worker_queue = Arc::clone(&queue);
             let worker_driver = Arc::clone(&driver);
             let worker_cancellations = Arc::clone(&cancellations);
+            let worker_metrics = Arc::clone(&metrics);
             let name = format!("{thread_name}-{index}");
 
             let spawn_result = thread::Builder::new().name(name).spawn(move || {
-                worker_loop(worker_receiver, worker_driver, worker_cancellations);
+                worker_loop(
+                    worker_queue,
+                    worker_driver,
+                    worker_cancellations,
+                    worker_metrics,
+                );
             });
 
             match spawn_result {
                 Ok(handle) => workers.push(handle),
                 Err(error) => {
-                    drop(sender);
+                    queue.close();
                     for handle in workers {
                         let _ = handle.join();
                     }
@@ -109,7 +187,7 @@ impl WorkerPool {
         }
 
         Ok(Self {
-            sender: Mutex::new(Some(sender)),
+            queue,
             workers: Mutex::new(workers),
             closed: AtomicBool::new(false),
         })
@@ -119,21 +197,7 @@ impl WorkerPool {
         if self.closed.load(Ordering::Acquire) {
             return Err(QueueSubmitError::Closed(job));
         }
-
-        let sender = match self.sender.lock() {
-            Ok(guard) => guard.as_ref().cloned(),
-            Err(_) => None,
-        };
-
-        let Some(sender) = sender else {
-            return Err(QueueSubmitError::Closed(job));
-        };
-
-        match sender.try_send(job) {
-            Ok(()) => Ok(()),
-            Err(TrySendError::Full(job)) => Err(QueueSubmitError::Full(job)),
-            Err(TrySendError::Disconnected(job)) => Err(QueueSubmitError::Closed(job)),
-        }
+        self.queue.try_push(job)
     }
 
     fn shutdown(&self) {
@@ -141,13 +205,7 @@ impl WorkerPool {
             return;
         }
 
-        // Dropping the last sender closes the channel. Workers finish queued
-        // jobs, then exit when `recv` returns `Disconnected`.
-        let sender = match self.sender.lock() {
-            Ok(mut guard) => guard.take(),
-            Err(poisoned) => poisoned.into_inner().take(),
-        };
-        drop(sender);
+        self.queue.close();
 
         let workers = match self.workers.lock() {
             Ok(mut guard) => std::mem::take(&mut *guard),
@@ -167,14 +225,7 @@ impl WorkerPool {
 impl Drop for WorkerPool {
     fn drop(&mut self) {
         self.closed.store(true, Ordering::Release);
-        match self.sender.get_mut() {
-            Ok(sender) => {
-                sender.take();
-            }
-            Err(poisoned) => {
-                poisoned.into_inner().take();
-            }
-        }
+        self.queue.close();
         let workers = match self.workers.get_mut() {
             Ok(workers) => std::mem::take(workers),
             Err(poisoned) => std::mem::take(poisoned.into_inner()),
@@ -201,6 +252,7 @@ enum QueueSubmitError {
 pub struct WorkerHostAwaitBridge {
     pool: WorkerPool,
     cancellations: Arc<Mutex<HashMap<AwaitKey, Weak<AtomicBool>>>>,
+    metrics: Arc<IoMetrics>,
 }
 
 impl std::fmt::Debug for WorkerHostAwaitBridge {
@@ -226,18 +278,26 @@ impl WorkerHostAwaitBridge {
         thread_name: impl AsRef<str>,
     ) -> Result<Self, IoInitError> {
         let cancellations = Arc::new(Mutex::new(HashMap::new()));
+        let metrics = Arc::new(IoMetrics::default());
         let pool = WorkerPool::new(
             driver,
             worker_count,
             queue_capacity,
             thread_name.as_ref(),
             Arc::clone(&cancellations),
+            Arc::clone(&metrics),
         )?;
 
         Ok(Self {
             pool,
             cancellations,
+            metrics,
         })
+    }
+
+    /// Shared metrics for this bridge (submit / full / settle counters).
+    pub fn metrics(&self) -> &Arc<IoMetrics> {
+        &self.metrics
     }
 
     /// Refuse new submissions, drain accepted work, and join worker threads.
@@ -279,12 +339,16 @@ impl HostAwaitBridge for WorkerHostAwaitBridge {
         };
 
         match self.pool.try_send(job) {
-            Ok(()) => {}
+            Ok(()) => {
+                self.metrics.record_submitted();
+            }
             Err(QueueSubmitError::Full(job)) => {
+                self.metrics.record_full();
                 self.remove_cancellation(job.key);
                 let _ = job.completer.fail("byteflow-io host-await queue is full");
             }
             Err(QueueSubmitError::Closed(job)) => {
+                self.metrics.record_closed();
                 self.remove_cancellation(job.key);
                 let _ = job.completer.fail("byteflow-io is shutting down");
             }
@@ -304,22 +368,14 @@ impl HostAwaitBridge for WorkerHostAwaitBridge {
 }
 
 fn worker_loop(
-    receiver: Arc<Mutex<Receiver<Job>>>,
+    queue: Arc<JobQueue>,
     driver: Arc<dyn IoDriver>,
     cancellations: Arc<Mutex<HashMap<AwaitKey, Weak<AtomicBool>>>>,
+    metrics: Arc<IoMetrics>,
 ) {
-    loop {
-        let received = match receiver.lock() {
-            Ok(guard) => guard.recv(),
-            Err(poisoned) => poisoned.into_inner().recv(),
-        };
-
-        let job = match received {
-            Ok(job) => job,
-            Err(_) => return,
-        };
-
-        let result = if job.token.is_cancelled() || job.completer.is_cancelled() {
+    while let Some(job) = queue.pop_wait() {
+        let cancelled = job.token.is_cancelled() || job.completer.is_cancelled();
+        let result = if cancelled {
             Err(IoDriverError::new(
                 "HostAwait operation cancelled before execution",
             ))
@@ -331,6 +387,12 @@ fn worker_loop(
                 Err(_) => Err(IoDriverError::new("host I/O driver panicked")),
             }
         };
+
+        match &result {
+            Ok(_) => metrics.record_ok(),
+            Err(_) if cancelled => {}
+            Err(_) => metrics.record_err(),
+        }
 
         // Settle through the core helper so cancel/stale races match Byteflow
         // (`Stale` when the ticket was already finalized).
