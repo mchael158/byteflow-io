@@ -33,6 +33,7 @@ mod bridge;
 mod driver;
 mod error;
 mod events;
+mod metrics;
 mod native_table;
 mod queue;
 
@@ -40,6 +41,7 @@ pub use bridge::{CancellationToken, WorkerHostAwaitBridge};
 pub use driver::{IoCommand, IoDriver, IoDriverError};
 pub use error::{IoInitError, NativeTableBuildError};
 pub use events::{event_tag, EventRouter};
+pub use metrics::{IoMetrics, IoMetricsSnapshot};
 pub use native_table::{build_native_table, native_index};
 pub use queue::{HostAwaitHandler, IoCommandReceiver, QueuedCommand, QueuedIoDriver};
 
