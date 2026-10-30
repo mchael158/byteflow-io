@@ -9,12 +9,17 @@ use std::time::Duration;
 
 use byteflow::{HostAwaitOp, Value};
 
+use crate::metrics::IoMetrics;
 use crate::{CancellationToken, IoCommand, IoDriver, IoDriverError};
 
 /// Fast-path command paired with the host-side ID returned to bytecode.
 #[derive(Clone, Debug, PartialEq)]
 pub struct QueuedCommand {
     /// Identifier previously returned by [`IoDriver::try_submit`].
+    ///
+    /// IDs are monotonically increasing and start at `1`, but they are **not
+    /// dense**: a failed enqueue after ID reservation (or a raced reject)
+    /// may leave gaps. Treat them as opaque correlation tokens.
     pub id: u64,
     /// Command payload to execute on a host-owned device thread.
     pub command: IoCommand,
@@ -87,13 +92,20 @@ impl IoCommandReceiver {
 /// concrete device operation there. Slow request/response work is delegated to
 /// [`HostAwaitHandler`].
 ///
-/// [`QueuedIoDriver::shutdown`] rejects new submissions; it does not join the
-/// application’s device consumer thread.
+/// [`QueuedIoDriver::shutdown`] rejects new submissions by taking the sender
+/// (fail-closed). It does not join the application’s device consumer thread.
+///
+/// # Command IDs
+///
+/// Returned IDs increase monotonically from `1`, but gaps are possible when an
+/// enqueue fails after the ID was reserved. Do not assume `id == N` means
+/// exactly `N` successful submits.
 pub struct QueuedIoDriver {
-    sender: SyncSender<QueuedCommand>,
+    sender: Mutex<Option<SyncSender<QueuedCommand>>>,
     next_id: AtomicU64,
     closed: AtomicBool,
     host_await: Arc<dyn HostAwaitHandler>,
+    metrics: Arc<IoMetrics>,
 }
 
 impl std::fmt::Debug for QueuedIoDriver {
@@ -122,24 +134,42 @@ impl QueuedIoDriver {
 
         let (sender, receiver) = sync_channel(capacity);
         let driver = Arc::new(Self {
-            sender,
+            sender: Mutex::new(Some(sender)),
             next_id: AtomicU64::new(1),
             closed: AtomicBool::new(false),
             host_await,
+            metrics: Arc::new(IoMetrics::default()),
         });
         let receiver = IoCommandReceiver {
             receiver: Mutex::new(receiver),
         };
         Ok((driver, receiver))
     }
+
+    /// Shared enqueue / reject counters for this driver.
+    pub fn metrics(&self) -> &Arc<IoMetrics> {
+        &self.metrics
+    }
 }
 
 impl IoDriver for QueuedIoDriver {
     fn try_submit(&self, command: IoCommand) -> Result<u64, IoDriverError> {
         if self.closed.load(Ordering::Acquire) {
+            self.metrics.record_closed();
             return Err(IoDriverError::new("I/O command queue is closed"));
         }
 
+        let sender = match self.sender.lock() {
+            Ok(guard) => guard.as_ref().cloned(),
+            Err(_) => None,
+        };
+        let Some(sender) = sender else {
+            self.metrics.record_closed();
+            return Err(IoDriverError::new("I/O command queue is closed"));
+        };
+
+        // Reserve an ID only while we still hold a live sender clone. Gaps are
+        // possible if try_send fails afterwards; see struct docs.
         let id = self
             .next_id
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
@@ -147,10 +177,17 @@ impl IoDriver for QueuedIoDriver {
             })
             .map_err(|_| IoDriverError::new("I/O command ID space exhausted"))?;
 
-        match self.sender.try_send(QueuedCommand { id, command }) {
-            Ok(()) => Ok(id),
-            Err(TrySendError::Full(_)) => Err(IoDriverError::new("I/O command queue is full")),
+        match sender.try_send(QueuedCommand { id, command }) {
+            Ok(()) => {
+                self.metrics.record_submitted();
+                Ok(id)
+            }
+            Err(TrySendError::Full(_)) => {
+                self.metrics.record_full();
+                Err(IoDriverError::new("I/O command queue is full"))
+            }
             Err(TrySendError::Disconnected(_)) => {
+                self.metrics.record_closed();
                 Err(IoDriverError::new("I/O command receiver was dropped"))
             }
         }
@@ -167,6 +204,13 @@ impl IoDriver for QueuedIoDriver {
 
     fn shutdown(&self) -> Result<(), IoDriverError> {
         self.closed.store(true, Ordering::Release);
+        // Dropping the last sender closes the channel for the consumer and
+        // makes subsequent try_submit fail closed even under races.
+        let sender = match self.sender.lock() {
+            Ok(mut guard) => guard.take(),
+            Err(poisoned) => poisoned.into_inner().take(),
+        };
+        drop(sender);
         self.host_await.shutdown()
     }
 }
