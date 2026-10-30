@@ -36,29 +36,15 @@ mod events;
 mod metrics;
 mod native_table;
 mod queue;
+pub mod samples;
 
 pub use bridge::{CancellationToken, WorkerHostAwaitBridge};
 pub use driver::{IoCommand, IoDriver, IoDriverError};
 pub use error::{IoInitError, NativeTableBuildError};
-pub use events::{event_tag, EventRouter};
+pub use events::EventRouter;
 pub use metrics::{IoMetrics, IoMetricsSnapshot};
 pub use native_table::{build_native_table, native_index};
 pub use queue::{HostAwaitHandler, IoCommandReceiver, QueuedCommand, QueuedIoDriver};
-
-/// Suggested host-owned [`byteflow::HostAwaitOp`] discriminators.
-///
-/// These values are application protocol IDs consumed by
-/// [`IoDriver::execute_host_await`]. They are **not** bytecode opcodes.
-pub mod host_op {
-    /// Publish to MQTT and wait for broker acknowledgement.
-    pub const MQTT_PUBLISH_AND_WAIT_ACK: u32 = 1;
-    /// Query a payment provider for transaction status.
-    pub const PAYMENT_STATUS: u32 = 2;
-    /// Start a machine cycle and wait for completion.
-    pub const START_MACHINE_CYCLE_AND_WAIT: u32 = 3;
-    /// Transfer one ESP OTA firmware chunk and wait for acknowledgement.
-    pub const ESP_OTA_CHUNK: u32 = 4;
-}
 
 use std::sync::Arc;
 
