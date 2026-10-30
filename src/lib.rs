@@ -57,6 +57,9 @@ pub const DEFAULT_MAX_HOST_AWAITS: u32 = 128;
 #[derive(Clone, Debug)]
 pub struct IoConfig {
     /// Number of dedicated host I/O worker threads (not Byteflow workers).
+    ///
+    /// Workers share an MPMC bounded queue; values greater than `1` run true
+    /// parallel HostAwait execution.
     pub worker_threads: usize,
     /// Maximum number of HostAwait jobs waiting for a free worker.
     pub queue_capacity: usize,
@@ -124,6 +127,11 @@ impl ByteflowIo {
         self.bridge.clone()
     }
 
+    /// Shared HostAwait bridge metrics (submit / full / settle).
+    pub fn metrics(&self) -> &Arc<IoMetrics> {
+        self.bridge.metrics()
+    }
+
     /// Build a [`RuntimeConfig`] wired to this bridge and the given output sink.
     ///
     /// Pass the same sink to [`build_native_table`] so the standard `print`
@@ -162,5 +170,6 @@ impl Drop for ByteflowIo {
         // Best-effort safety net. Prefer an explicit `shutdown` so errors and
         // runtime/driver ordering remain observable.
         self.bridge.shutdown();
+        let _ = self.driver.shutdown();
     }
 }
