@@ -64,12 +64,14 @@ host integration                runtime / core
 
 | Module | Responsibility |
 |--------|----------------|
-| `lib` | `ByteflowIo`, `IoConfig`, suggested `host_op` IDs |
-| `bridge` | Bounded `HostAwaitBridge` worker pool + cancellation |
-| `driver` | `IoDriver` / `IoCommand` host contract |
-| `queue` | `QueuedIoDriver` + `HostAwaitHandler` |
+| `lib` | `ByteflowIo`, `IoConfig` |
+| `bridge` | MPMC bounded `HostAwaitBridge` worker pool + cancellation |
+| `driver` | `IoDriver` / `IoCommand` (incl. `Custom`) host contract |
+| `queue` | `QueuedIoDriver` + `HostAwaitHandler` (fail-closed shutdown) |
 | `native_table` | Standard slots `0..=7` composed with I/O slots `8..=10` |
-| `events` | `EventRouter` for trusted host → flow delivery |
+| `events` | `EventRouter` (`Arc<Runtime>`) for trusted host → flow delivery |
+| `metrics` | Submit / full / settle counters |
+| `samples` | Non-normative `host_op` / `event_tag` constants |
 | `error` | Init and native-table composition errors |
 
 ## Non-goals

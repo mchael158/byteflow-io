@@ -12,7 +12,7 @@ through the contracts below.
 bytecode / CallNative / HostAwait
               │
               ▼
-         byteflow-io          ← bounded queues, natives 8..=10, HostAwait workers
+         byteflow-io          ← bounded MPMC queues, natives 8..=10, HostAwait workers
               │
               ▼
       host IoDriver           ← MQTT, UART, GPIO, payments, ESP, …
@@ -23,10 +23,11 @@ bytecode / CallNative / HostAwait
 | Surface | Role |
 |---------|------|
 | Fast `CallNative` adapters | Validate arguments and enqueue into a bounded host queue |
-| [`WorkerHostAwaitBridge`](src/bridge.rs) | Run slow work on a dedicated, bounded host worker pool |
+| [`WorkerHostAwaitBridge`](src/bridge.rs) | MPMC HostAwait worker pool (true parallelism for `N > 1`) |
 | [`EventRouter`](src/events.rs) | Inject external events as authenticated `Value::Message` hops |
 | [`build_native_table`](src/native_table.rs) | Preserve Byteflow slots `0..=7` and append I/O slots `8..=10` |
 | [`QueuedIoDriver`](src/queue.rs) | Ready-made bounded command queue for the fast path |
+| [`IoMetrics`](src/metrics.rs) | Submit / full / settle counters for bridge and queue |
 
 Dependency direction is one-way: `byteflow-io` → `byteflow`. The core never
 depends on this crate.
@@ -87,31 +88,32 @@ Each native calls only [`IoDriver::try_submit`](src/driver.rs). The driver must
 enqueue and return immediately. The returned ID means *accepted by the host
 queue*, not *device operation completed*.
 
+For host-specific fast commands that are not one of the built-in natives, enqueue
+[`IoCommand::Custom`](src/driver.rs) from host code.
+
 ## HostAwait operations
 
-Suggested application operation IDs live in [`host_op`](src/lib.rs):
+Sample application operation IDs live in [`samples::host_op`](src/samples.rs)
+(non-normative). Hosts should define their own stable discriminators.
 
-| Constant | Value |
-|----------|------:|
-| `MQTT_PUBLISH_AND_WAIT_ACK` | 1 |
-| `PAYMENT_STATUS` | 2 |
-| `START_MACHINE_CYCLE_AND_WAIT` | 3 |
-| `ESP_OTA_CHUNK` | 4 |
-
-These are host protocol discriminators, **not** ISA opcodes. Implement
-[`IoDriver::execute_host_await`](src/driver.rs) (or
+Implement [`IoDriver::execute_host_await`](src/driver.rs) (or
 [`HostAwaitHandler`](src/queue.rs)). Work runs on a `byteflow-io` worker
 thread — never on a Byteflow scheduler worker. Apply finite deadlines and
 poll [`CancellationToken`](src/bridge.rs) between blocking steps.
 
+The HostAwait pool is an **MPMC** bounded queue: every idle worker may take
+the next job. `IoConfig::worker_threads > 1` is true parallel execution.
+
 ## Inbound events
 
 ```rust
+use std::sync::Arc;
 use byteflow::{Runtime, Value};
-use byteflow_io::{event_tag, EventRouter};
+use byteflow_io::samples::event_tag;
+use byteflow_io::EventRouter;
 
-// `target_flow` comes from trusted host-side bookkeeping, not untrusted bytecode.
-let events = EventRouter::new(&runtime);
+// Retain Arc so device callbacks on other threads can deliver events.
+let events = EventRouter::new(Arc::clone(&runtime));
 events.send(
     target_flow,
     1001,
@@ -122,22 +124,30 @@ events.send(
 
 `EventRouter` wraps the payload in `Message::request` and calls
 `Runtime::send`. Bare scalars are never delivered on the wire path.
+`Runtime::shutdown` takes ownership; drop all `Arc` clones (or
+`Arc::try_unwrap`) when tearing down.
 
 ## Queued driver
 
 [`QueuedIoDriver`](src/queue.rs) implements the fast path with a bounded
-`sync_channel`. The host drains [`IoCommandReceiver`](src/queue.rs) on its
-own device thread. A full queue fails immediately; the native surfaces that
-as a Byteflow `Fault`.
+channel. The host drains [`IoCommandReceiver`](src/queue.rs) on its own
+device thread. A full queue fails immediately; the native surfaces that as a
+Byteflow `Fault`.
 
-`QueuedIoDriver::shutdown` rejects new submissions. It does not join the
-application’s MQTT/UART/GPIO consumer thread — that remains host-owned.
+`QueuedIoDriver::shutdown` takes the sender so later submits fail closed even
+under races. It does not join the application’s device consumer thread.
+
+Command IDs increase from `1` but may contain **gaps** after a failed enqueue.
+Treat them as opaque correlation tokens, not dense counters.
+
+Inspect [`QueuedIoDriver::metrics`](src/queue.rs) /
+[`ByteflowIo::metrics`](src/lib.rs) for submit / full / settle counters.
 
 ## Design constraints
 
 - No new I/O opcodes; the VM never opens sockets, files, UART, or GPIO.
 - `CallNative` must not wait on network, brokers, devices, or long locks.
-- HostAwait workers are bounded; queue saturation fails closed.
+- HostAwait workers are bounded MPMC; queue saturation fails closed.
 - Completions use Byteflow’s `finish_host_await` settle path.
 - Native slots `0..=7` are append-only ABI; I/O natives start at `8`.
 - Access remains gated by `CapRights::NATIVE` and `NativeMask` in the core.
@@ -151,8 +161,9 @@ cargo test --all-targets
 cargo run --example host_await_echo
 ```
 
-Default tests use in-memory fakes. Hardware-in-the-loop adapters belong in
-the host application or optional feature crates.
+Default tests use in-memory fakes (queue full, cancel, panic, parallel
+workers, EventRouter). Hardware-in-the-loop adapters belong in the host
+application or optional feature crates.
 
 ## License
 
