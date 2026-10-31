@@ -9,7 +9,9 @@
 //!
 //! - bounded host command queues for fast `CallNative` adapters;
 //! - a dedicated [`HostAwaitBridge`] worker pool for slow external work;
-//! - helpers that inject inbound events as Atomic Hop [`byteflow::Value::Message`] values.
+//! - helpers that inject inbound events as Atomic Hop [`byteflow::Value::Message`] values;
+//! - generic [`crate::fleet`] site registry + optional [`laundry`] washer profile;
+//! - typed driver errors via [`IoErrorKind`] / [`IoDriverError`].
 //!
 //! Concrete MQTT, UART, GPIO, and payment clients remain in the host
 //! application. Implement [`IoDriver`] so that [`IoDriver::try_submit`] is

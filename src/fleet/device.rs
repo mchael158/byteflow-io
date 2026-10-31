@@ -43,7 +43,7 @@ impl DeviceId {
 }
 
 /// Host-tracked lifecycle (product-agnostic).
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum DeviceState {
     /// Ready; no pending work.
     Idle,
@@ -54,6 +54,7 @@ pub enum DeviceState {
     /// Fault reported by device or host policy.
     Fault,
     /// Unreachable / never seen.
+    #[default]
     Offline,
 }
 
@@ -65,12 +66,6 @@ impl DeviceState {
     /// Alias of [`DeviceState::Busy`].
     #[allow(non_upper_case_globals)]
     pub const Running: Self = Self::Busy;
-}
-
-impl Default for DeviceState {
-    fn default() -> Self {
-        Self::Offline
-    }
 }
 
 impl From<DeviceState> for i64 {

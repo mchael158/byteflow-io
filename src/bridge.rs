@@ -87,10 +87,10 @@ impl JobQueue {
             Err(poisoned) => poisoned.into_inner(),
         };
         if state.closed {
-            return Err(QueueSubmitError::Closed(job));
+            return Err(QueueSubmitError::Closed(Box::new(job)));
         }
         if state.jobs.len() >= state.capacity {
-            return Err(QueueSubmitError::Full(job));
+            return Err(QueueSubmitError::Full(Box::new(job)));
         }
         state.jobs.push_back(job);
         self.has_job.notify_one();
@@ -196,7 +196,7 @@ impl WorkerPool {
 
     fn try_send(&self, job: Job) -> Result<(), QueueSubmitError> {
         if self.closed.load(Ordering::Acquire) {
-            return Err(QueueSubmitError::Closed(job));
+            return Err(QueueSubmitError::Closed(Box::new(job)));
         }
         self.queue.try_push(job)
     }
@@ -241,8 +241,8 @@ impl Drop for WorkerPool {
 }
 
 enum QueueSubmitError {
-    Full(Job),
-    Closed(Job),
+    Full(Box<Job>),
+    Closed(Box<Job>),
 }
 
 /// Bounded host worker pool implementing Byteflow’s [`HostAwaitBridge`].

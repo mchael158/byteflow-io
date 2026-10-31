@@ -28,7 +28,8 @@ bytecode / CallNative / HostAwait
 | [`build_native_table`](src/native_table.rs) | Preserve Byteflow slots `0..=7` and append I/O slots `8..=10` |
 | [`QueuedIoDriver`](src/queue.rs) | Ready-made bounded command queue for the fast path |
 | [`IoMetrics`](src/metrics.rs) | Submit / full / settle counters for bridge and queue |
-| [`laundry`](src/laundry) | Fleet of **56 washers** + ESP32 topics / HostAwait / event routing |
+| [`fleet`](src/fleet) | Generic device fleet + [`bootstrap_composite`](src/fleet/mod.rs) (queue + HostAwait) |
+| [`laundry`](src/laundry) | Optional washer profile (topics / naming) over `fleet` |
 
 Dependency direction is one-way: `byteflow-io` → `byteflow`. The core never
 depends on this crate.
@@ -95,7 +96,9 @@ For host-specific fast commands that are not one of the built-in natives, enqueu
 ## HostAwait operations
 
 Sample application operation IDs live in [`samples::host_op`](src/samples.rs)
-(non-normative). Hosts should define their own stable discriminators.
+(non-normative). Generic aliases (`START_ACTION_AND_WAIT`, `APPLY_CREDIT`, …)
+share the same numeric ids as the laundry-oriented names. Hosts should define
+their own stable discriminators when shipping independent `.bf` modules.
 
 Implement [`IoDriver::execute_host_await`](src/driver.rs) (or
 [`HostAwaitHandler`](src/queue.rs)). Work runs on a `byteflow-io` worker
@@ -165,22 +168,29 @@ topic root, label). ESP32 is an optional edge MCU, not a hard dependency.
 - Default `InMemoryDeviceTransport` for tests / dry-runs
 - One `FleetRegistry` + `FleetDriver` per site
 - HostAwait: arm/credit, start action, OTA chunk, MQTT wait-ACK
+- [`bootstrap_composite`](src/fleet/mod.rs): fast queue + fleet HostAwait on one [`ByteflowIo`]
+- [`dispatch_queued_command`](src/fleet/dispatch.rs): **required** on the device thread so MQTT/fleet `Custom` reach the edge transport
 
 ```rust
-use byteflow_io::fleet::{bootstrap, FleetProfile};
+use byteflow_io::fleet::{
+    bootstrap_composite, dispatch_queued_command, FleetProfile, DEFAULT_FAST_QUEUE_CAPACITY,
+};
 use byteflow_io::IoConfig;
 
-let (io, fleet, _driver) = bootstrap(FleetProfile::generic_site(), IoConfig::default())?;
-let id = fleet.device_id(1).unwrap();
-fleet.bind(id, handle.id())?;
+let (io, fleet, device_rx, fleet_driver) =
+    bootstrap_composite(FleetProfile::generic_site(), IoConfig::default(), DEFAULT_FAST_QUEUE_CAPACITY)?;
+// On your device thread:
+while let Ok(queued) = device_rx.try_recv() {
+    match dispatch_queued_command(&fleet_driver, queued)? { /* GPIO vs fleet */ }
+}
 ```
+
+HostAwait must run through the runtime bridge (`f.host_await` / [`ByteflowIo::runtime_config`]), not by calling [`IoDriver::execute_host_await`] on the main thread.
+
+For HostAwait-only sites (no GPIO/UART natives), [`fleet::bootstrap`](src/fleet/mod.rs) is enough.
 
 [`laundry`](src/laundry) is only a thin washer profile (`MachineId`,
 `laundry/washer/…` topics) on top of `fleet` — not the core of the crate.
-
-```sh
-cargo run --example fleet_two_washers
-```
 
 ## Development
 
@@ -188,6 +198,7 @@ cargo run --example fleet_two_washers
 cargo test --all-targets
 cargo run --example host_await_echo
 cargo run --example fleet_two_washers
+cargo run --example fleet_queued_host
 ```
 
 Default tests use in-memory fakes (queue full, cancel, panic, parallel

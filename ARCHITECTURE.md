@@ -72,9 +72,9 @@ host integration                runtime / core
 | `events` | `EventRouter` (`Arc<Runtime>`) for trusted host → flow delivery |
 | `metrics` | Submit / full / settle counters |
 | `samples` | Non-normative `host_op` / `event_tag` constants |
-| `fleet` | Generic low-cost device fleet (`FleetProfile`, registry, transport, driver) |
+| `fleet` | Registry, transport, driver, [`dispatch_queued_command`](src/fleet/dispatch.rs), composite bootstrap |
 | `laundry` | Thin washer profile / aliases over `fleet` (optional) |
-| `error` | Init and native-table composition errors |
+| `error` | Init, native-table, and typed [`IoDriverError`](src/error.rs) kinds |
 
 ## Device fleet (any product)
 
@@ -91,6 +91,8 @@ Flow device-N ──HostAwait──► FleetDriver ──► DeviceTransport (MQ
 - Inbound edge events use `FleetRegistry::deliver_event`.
 - No broker SDK here — host implements `DeviceTransport` (ESP32 optional).
 - `laundry` reuses the same stack with washer naming only.
+- [`bootstrap_composite`](src/fleet/mod.rs): [`QueuedIoDriver`] fast path + [`FleetDriver`] HostAwait.
+- [`dispatch_queued_command`](src/fleet/dispatch.rs): routes dequeued MQTT/fleet `Custom` into the edge transport; GPIO/UART stay on the host device thread.
 
 ## Non-goals
 

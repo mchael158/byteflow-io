@@ -13,8 +13,10 @@ use crate::{CancellationToken, IoDriverError};
 
 /// Host bridge to cheap edge devices (ESP32, MCU, UART bridge, …).
 ///
-/// Production: MQTT or UART. Tests: [`InMemoryDeviceTransport`] — deterministic,
-/// zero extra crates, low host cost.
+/// Production: MQTT or UART. Tests: [`InMemoryDeviceTransport`].
+///
+/// Custom transports must implement [`DeviceTransport::as_any`] (typically
+/// `fn as_any(&self) -> &dyn std::any::Any { self }`).
 pub trait DeviceTransport: Send + Sync + fmt::Debug + 'static {
     fn publish_and_wait(
         &self,
@@ -24,6 +26,9 @@ pub trait DeviceTransport: Send + Sync + fmt::Debug + 'static {
     ) -> Result<Value, IoDriverError>;
 
     fn enqueue(&self, command: &DeviceCommand) -> Result<(), IoDriverError>;
+
+    /// Downcast for host diagnostics / tests.
+    fn as_any(&self) -> &dyn std::any::Any;
 }
 
 fn map_fleet_err(err: FleetError) -> IoDriverError {
@@ -107,6 +112,10 @@ impl InMemoryDeviceTransport {
 }
 
 impl DeviceTransport for InMemoryDeviceTransport {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
     fn enqueue(&self, command: &DeviceCommand) -> Result<(), IoDriverError> {
         self.record(command)?;
         if let DeviceCommand::AbortAction { device } = command {

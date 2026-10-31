@@ -8,13 +8,6 @@ use crate::IoDriverError;
 /// HostAwait op ids (stable across profiles).
 pub mod host_op {
     pub use crate::samples::host_op::*;
-
-    /// Alias: start the device's primary action and wait for ACK.
-    pub const START_ACTION_AND_WAIT: u32 = START_MACHINE_CYCLE_AND_WAIT;
-    /// Alias: push one OTA chunk to any edge MCU (ESP32 or otherwise).
-    pub const DEVICE_OTA_CHUNK: u32 = ESP_OTA_CHUNK;
-    /// Alias: apply credit / unlock / arm token.
-    pub const APPLY_CREDIT: u32 = PAYMENT_STATUS;
 }
 
 /// Inbound Atomic Hop tags for device flows.

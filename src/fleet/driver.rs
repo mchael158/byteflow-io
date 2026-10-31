@@ -8,7 +8,7 @@ use byteflow::{HostAwaitOp, Value};
 
 use super::protocol::{custom_op, host_op, DeviceCommand};
 use super::topics;
-use super::transport::DeviceTransport;
+use super::transport::{DeviceTransport, InMemoryDeviceTransport};
 use super::SharedFleet;
 use crate::{CancellationToken, IoCommand, IoDriver, IoDriverError};
 
@@ -58,6 +58,20 @@ impl FleetDriver {
 
     pub fn transport(&self) -> &Arc<dyn DeviceTransport> {
         &self.transport
+    }
+
+    /// Snapshot of commands accepted by the in-memory simulator (tests / dry-run).
+    pub fn in_memory_published(&self) -> Result<Vec<DeviceCommand>, IoDriverError> {
+        self.transport
+            .as_ref()
+            .as_any()
+            .downcast_ref::<InMemoryDeviceTransport>()
+            .ok_or_else(|| {
+                IoDriverError::unsupported(
+                    "fleet driver transport is not InMemoryDeviceTransport",
+                )
+            })?
+            .published()
     }
 
     fn alloc_id(&self) -> Result<u64, IoDriverError> {
@@ -125,7 +139,7 @@ impl FleetDriver {
             },
             IoCommand::GpioWrite { .. } | IoCommand::UartWrite { .. } => {
                 Err(IoDriverError::unsupported(
-                    "fleet driver does not handle GPIO/UART natives; use a composite host driver",
+                    "fleet driver does not handle GPIO/UART natives; use fleet::bootstrap_composite",
                 ))
             }
         }
@@ -190,5 +204,20 @@ impl IoDriver for FleetDriver {
     fn shutdown(&self) -> Result<(), IoDriverError> {
         self.closed.store(true, Ordering::Release);
         Ok(())
+    }
+}
+
+impl crate::HostAwaitHandler for FleetDriver {
+    fn execute(
+        &self,
+        op: HostAwaitOp,
+        args: Value,
+        cancel: &CancellationToken,
+    ) -> Result<Value, IoDriverError> {
+        IoDriver::execute_host_await(self, op, args, cancel)
+    }
+
+    fn shutdown(&self) -> Result<(), IoDriverError> {
+        IoDriver::shutdown(self)
     }
 }

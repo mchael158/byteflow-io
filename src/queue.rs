@@ -122,15 +122,17 @@ impl QueuedIoDriver {
     /// # Errors
     ///
     /// Returns [`IoDriverError`] when `capacity` is zero.
-    pub fn new(
+    pub fn new<H: HostAwaitHandler + 'static>(
         capacity: usize,
-        host_await: Arc<dyn HostAwaitHandler>,
+        host_await: Arc<H>,
     ) -> Result<(Arc<Self>, IoCommandReceiver), IoDriverError> {
         if capacity == 0 {
             return Err(IoDriverError::invalid_args(
                 "I/O command queue capacity must be greater than zero",
             ));
         }
+
+        let host_await: Arc<dyn HostAwaitHandler> = host_await;
 
         let (sender, receiver) = sync_channel(capacity);
         let driver = Arc::new(Self {
