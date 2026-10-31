@@ -1,10 +1,10 @@
 //! Host driver contract for fast command submission and slow HostAwait work.
 
-use std::error::Error;
 use std::fmt;
 
 use byteflow::{HostAwaitOp, Value};
 
+use crate::error::IoDriverError;
 use crate::CancellationToken;
 
 /// Command accepted by a host driver through the fast, non-blocking path.
@@ -38,34 +38,6 @@ pub enum IoCommand {
     Custom { op: u32, args: Value },
 }
 
-/// Error returned by a host I/O adapter.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct IoDriverError {
-    message: String,
-}
-
-impl IoDriverError {
-    /// Create an error with a human-readable message.
-    pub fn new(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-        }
-    }
-
-    /// Borrow the error message.
-    pub fn message(&self) -> &str {
-        &self.message
-    }
-}
-
-impl fmt::Display for IoDriverError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.message)
-    }
-}
-
-impl Error for IoDriverError {}
-
 /// Host application contract for concrete devices and services.
 ///
 /// # Fast path — [`IoDriver::try_submit`]
@@ -93,7 +65,7 @@ pub trait IoDriver: Send + Sync + fmt::Debug + 'static {
         _args: Value,
         _cancel: &CancellationToken,
     ) -> Result<Value, IoDriverError> {
-        Err(IoDriverError::new(
+        Err(IoDriverError::not_implemented(
             "HostAwait operation is not implemented by this driver",
         ))
     }

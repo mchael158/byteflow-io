@@ -3,7 +3,9 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use byteflow::{NullSink, Value};
-use byteflow_io::{build_native_table, native_index, IoCommand, IoDriver, IoDriverError};
+use byteflow_io::{
+    build_native_table, native_index, IoCommand, IoDriver, IoDriverError, IoErrorKind,
+};
 
 #[derive(Debug, Default)]
 struct TestDriver {
@@ -15,7 +17,7 @@ impl IoDriver for TestDriver {
     fn try_submit(&self, command: IoCommand) -> Result<u64, IoDriverError> {
         match self.commands.lock() {
             Ok(mut commands) => commands.push(command),
-            Err(_) => return Err(IoDriverError::new("test command queue poisoned")),
+            Err(_) => return Err(IoDriverError::poisoned("test command queue poisoned")),
         }
         Ok(self.next_id.fetch_add(1, Ordering::Relaxed) + 1)
     }
@@ -124,9 +126,9 @@ fn queued_driver_is_bounded_and_returns_before_device_execution() {
         pin: 5,
         high: false,
     });
-    assert!(
-        second.is_err(),
-        "second command must not wait for queue space"
+    assert_eq!(
+        second.expect_err("second command must not wait for queue space").kind(),
+        IoErrorKind::QueueFull
     );
     assert_eq!(driver.metrics().snapshot().rejected_full, 1);
 
@@ -152,7 +154,7 @@ fn queued_driver_shutdown_rejects_further_submits() {
         op: 1,
         args: Value::Unit,
     });
-    assert!(err.is_err());
+    assert_eq!(err.expect_err("closed").kind(), IoErrorKind::QueueClosed);
     assert_eq!(driver.metrics().snapshot().rejected_closed, 1);
 }
 
@@ -184,7 +186,7 @@ struct EchoAwaitDriver;
 
 impl IoDriver for EchoAwaitDriver {
     fn try_submit(&self, _command: IoCommand) -> Result<u64, IoDriverError> {
-        Err(IoDriverError::new("fast commands are not used by this test"))
+        Err(IoDriverError::unsupported("fast commands are not used by this test"))
     }
 
     fn execute_host_await(
@@ -194,10 +196,10 @@ impl IoDriver for EchoAwaitDriver {
         cancel: &byteflow_io::CancellationToken,
     ) -> Result<Value, IoDriverError> {
         if cancel.is_cancelled() {
-            return Err(IoDriverError::new("cancelled"));
+            return Err(IoDriverError::cancelled("cancelled"));
         }
         if op != 77 {
-            return Err(IoDriverError::new("unexpected test op"));
+            return Err(IoDriverError::unsupported("unexpected test op"));
         }
         Ok(args)
     }
@@ -270,15 +272,15 @@ impl HoldGate {
     }
 
     fn wait_release(&self, cancel: &byteflow_io::CancellationToken) -> Result<(), IoDriverError> {
-        let mut guard = self.release.lock().map_err(|_| IoDriverError::new("poison"))?;
+        let mut guard = self.release.lock().map_err(|_| IoDriverError::poisoned("poison"))?;
         while !*guard {
             if cancel.is_cancelled() {
-                return Err(IoDriverError::new("cancelled while held"));
+                return Err(IoDriverError::cancelled("cancelled while held"));
             }
             let (next, _) = self
                 .cv
                 .wait_timeout(guard, Duration::from_millis(20))
-                .map_err(|_| IoDriverError::new("wait"))?;
+                .map_err(|_| IoDriverError::other("wait"))?;
             guard = next;
         }
         Ok(())
@@ -298,7 +300,7 @@ struct HoldingDriver {
 
 impl IoDriver for HoldingDriver {
     fn try_submit(&self, _command: IoCommand) -> Result<u64, IoDriverError> {
-        Err(IoDriverError::new("unused"))
+        Err(IoDriverError::unsupported("unused"))
     }
 
     fn execute_host_await(
@@ -377,7 +379,7 @@ struct PanicDriver;
 
 impl IoDriver for PanicDriver {
     fn try_submit(&self, _command: IoCommand) -> Result<u64, IoDriverError> {
-        Err(IoDriverError::new("unused"))
+        Err(IoDriverError::unsupported("unused"))
     }
 
     fn execute_host_await(
@@ -554,7 +556,7 @@ fn parallel_workers_can_run_two_awaits() -> Result<(), Box<dyn std::error::Error
 
     impl IoDriver for ParallelDriver {
         fn try_submit(&self, _command: IoCommand) -> Result<u64, IoDriverError> {
-            Err(IoDriverError::new("unused"))
+            Err(IoDriverError::unsupported("unused"))
         }
 
         fn execute_host_await(

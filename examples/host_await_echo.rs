@@ -16,7 +16,9 @@ struct DemoDriver;
 
 impl IoDriver for DemoDriver {
     fn try_submit(&self, _command: byteflow_io::IoCommand) -> Result<u64, IoDriverError> {
-        Err(IoDriverError::new("no fast device commands in this example"))
+        Err(IoDriverError::unsupported(
+            "no fast device commands in this example",
+        ))
     }
 
     fn execute_host_await(
@@ -26,15 +28,17 @@ impl IoDriver for DemoDriver {
         cancel: &CancellationToken,
     ) -> Result<Value, IoDriverError> {
         if cancel.is_cancelled() {
-            return Err(IoDriverError::new("operation cancelled"));
+            return Err(IoDriverError::cancelled("operation cancelled"));
         }
         if op != ECHO_AND_INCREMENT {
-            return Err(IoDriverError::new(format!("unknown host operation: {op}")));
+            return Err(IoDriverError::unsupported(format!(
+                "unknown host operation: {op}"
+            )));
         }
 
         let number = args
             .as_int()
-            .ok_or_else(|| IoDriverError::new("expected Int argument"))?;
+            .ok_or_else(|| IoDriverError::invalid_args("expected Int argument"))?;
         Ok(Value::Int(number + 1))
     }
 }

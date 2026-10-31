@@ -127,7 +127,7 @@ impl QueuedIoDriver {
         host_await: Arc<dyn HostAwaitHandler>,
     ) -> Result<(Arc<Self>, IoCommandReceiver), IoDriverError> {
         if capacity == 0 {
-            return Err(IoDriverError::new(
+            return Err(IoDriverError::invalid_args(
                 "I/O command queue capacity must be greater than zero",
             ));
         }
@@ -156,7 +156,7 @@ impl IoDriver for QueuedIoDriver {
     fn try_submit(&self, command: IoCommand) -> Result<u64, IoDriverError> {
         if self.closed.load(Ordering::Acquire) {
             self.metrics.record_closed();
-            return Err(IoDriverError::new("I/O command queue is closed"));
+            return Err(IoDriverError::closed("I/O command queue is closed"));
         }
 
         let sender = match self.sender.lock() {
@@ -165,7 +165,7 @@ impl IoDriver for QueuedIoDriver {
         };
         let Some(sender) = sender else {
             self.metrics.record_closed();
-            return Err(IoDriverError::new("I/O command queue is closed"));
+            return Err(IoDriverError::closed("I/O command queue is closed"));
         };
 
         // Reserve an ID only while we still hold a live sender clone. Gaps are
@@ -175,7 +175,7 @@ impl IoDriver for QueuedIoDriver {
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
                 current.checked_add(1)
             })
-            .map_err(|_| IoDriverError::new("I/O command ID space exhausted"))?;
+            .map_err(|_| IoDriverError::exhausted("I/O command ID space exhausted"))?;
 
         match sender.try_send(QueuedCommand { id, command }) {
             Ok(()) => {
@@ -184,11 +184,11 @@ impl IoDriver for QueuedIoDriver {
             }
             Err(TrySendError::Full(_)) => {
                 self.metrics.record_full();
-                Err(IoDriverError::new("I/O command queue is full"))
+                Err(IoDriverError::full("I/O command queue is full"))
             }
             Err(TrySendError::Disconnected(_)) => {
                 self.metrics.record_closed();
-                Err(IoDriverError::new("I/O command receiver was dropped"))
+                Err(IoDriverError::closed("I/O command receiver was dropped"))
             }
         }
     }

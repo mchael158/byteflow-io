@@ -1,9 +1,9 @@
 //! Non-normative application protocol constants for demos and host scaffolding.
 //!
 //! These values are **not** part of the Byteflow ISA and are not required by
-//! the integration contracts. Hosts should define their own stable IDs; the
-//! constants here exist only as a reference shape for laundry / ESP style
-//! appliances.
+//! the integration contracts. Prefer [`crate::fleet::host_op`] /
+//! [`crate::fleet::event_tag`] (or the thin [`crate::laundry`] profile); this
+//! module remains the shared numeric source those aliases re-export.
 
 /// Example [`byteflow::HostAwaitOp`] discriminators for slow host work.
 pub mod host_op {

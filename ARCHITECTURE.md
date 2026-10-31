@@ -72,7 +72,25 @@ host integration                runtime / core
 | `events` | `EventRouter` (`Arc<Runtime>`) for trusted host → flow delivery |
 | `metrics` | Submit / full / settle counters |
 | `samples` | Non-normative `host_op` / `event_tag` constants |
+| `fleet` | Generic low-cost device fleet (`FleetProfile`, registry, transport, driver) |
+| `laundry` | Thin washer profile / aliases over `fleet` (optional) |
 | `error` | Init and native-table composition errors |
+
+## Device fleet (any product)
+
+```text
+Flow device-N ──HostAwait──► FleetDriver ──► DeviceTransport (MQTT/UART/sim)
+       ▲                                              │
+       └──────── EventRouter ◄──── FleetRegistry ◄────┘
+```
+
+- Retarget with `FleetProfile` only (max devices, topic root, label).
+- One trusted `FlowId` per `DeviceId`, bound by the host.
+- Fast path: `CallNative` / `IoCommand::Custom` enqueue only.
+- Slow path: HostAwait for arm/credit, start action, OTA chunk, MQTT ACK.
+- Inbound edge events use `FleetRegistry::deliver_event`.
+- No broker SDK here — host implements `DeviceTransport` (ESP32 optional).
+- `laundry` reuses the same stack with washer naming only.
 
 ## Non-goals
 

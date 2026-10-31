@@ -37,7 +37,8 @@ impl CancellationToken {
         self.cancelled.load(Ordering::Acquire)
     }
 
-    pub(crate) fn cancel(&self) {
+    /// Mark this token cancelled (host policy / tests).
+    pub fn cancel(&self) {
         self.cancelled.store(true, Ordering::Release);
     }
 }
@@ -376,7 +377,7 @@ fn worker_loop(
     while let Some(job) = queue.pop_wait() {
         let cancelled = job.token.is_cancelled() || job.completer.is_cancelled();
         let result = if cancelled {
-            Err(IoDriverError::new(
+            Err(IoDriverError::cancelled(
                 "HostAwait operation cancelled before execution",
             ))
         } else {
@@ -384,7 +385,7 @@ fn worker_loop(
                 driver.execute_host_await(job.request.op, job.request.args.clone(), &job.token)
             })) {
                 Ok(result) => result,
-                Err(_) => Err(IoDriverError::new("host I/O driver panicked")),
+                Err(_) => Err(IoDriverError::other("host I/O driver panicked")),
             }
         };
 

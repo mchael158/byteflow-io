@@ -33,14 +33,16 @@ mod bridge;
 mod driver;
 mod error;
 mod events;
+pub mod fleet;
+pub mod laundry;
 mod metrics;
 mod native_table;
 mod queue;
 pub mod samples;
 
 pub use bridge::{CancellationToken, WorkerHostAwaitBridge};
-pub use driver::{IoCommand, IoDriver, IoDriverError};
-pub use error::{IoInitError, NativeTableBuildError};
+pub use driver::{IoCommand, IoDriver};
+pub use error::{IoDriverError, IoErrorKind, IoInitError, NativeTableBuildError};
 pub use events::EventRouter;
 pub use metrics::{IoMetrics, IoMetricsSnapshot};
 pub use native_table::{build_native_table, native_index};

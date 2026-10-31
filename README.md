@@ -28,6 +28,7 @@ bytecode / CallNative / HostAwait
 | [`build_native_table`](src/native_table.rs) | Preserve Byteflow slots `0..=7` and append I/O slots `8..=10` |
 | [`QueuedIoDriver`](src/queue.rs) | Ready-made bounded command queue for the fast path |
 | [`IoMetrics`](src/metrics.rs) | Submit / full / settle counters for bridge and queue |
+| [`laundry`](src/laundry) | Fleet of **56 washers** + ESP32 topics / HostAwait / event routing |
 
 Dependency direction is one-way: `byteflow-io` → `byteflow`. The core never
 depends on this crate.
@@ -154,16 +155,44 @@ Inspect [`QueuedIoDriver::metrics`](src/queue.rs) /
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full contract map.
 
+## Device fleet (generic, low-cost)
+
+[`fleet`](src/fleet) is product-agnostic: lockers, sensors, kiosks, washers —
+same contracts, different [`FleetProfile`](src/fleet/profile.rs) (capacity,
+topic root, label). ESP32 is an optional edge MCU, not a hard dependency.
+
+- No MQTT/hardware SDK in this crate (keeps host cost low)
+- Default `InMemoryDeviceTransport` for tests / dry-runs
+- One `FleetRegistry` + `FleetDriver` per site
+- HostAwait: arm/credit, start action, OTA chunk, MQTT wait-ACK
+
+```rust
+use byteflow_io::fleet::{bootstrap, FleetProfile};
+use byteflow_io::IoConfig;
+
+let (io, fleet, _driver) = bootstrap(FleetProfile::generic_site(), IoConfig::default())?;
+let id = fleet.device_id(1).unwrap();
+fleet.bind(id, handle.id())?;
+```
+
+[`laundry`](src/laundry) is only a thin washer profile (`MachineId`,
+`laundry/washer/…` topics) on top of `fleet` — not the core of the crate.
+
+```sh
+cargo run --example fleet_two_washers
+```
+
 ## Development
 
 ```sh
 cargo test --all-targets
 cargo run --example host_await_echo
+cargo run --example fleet_two_washers
 ```
 
 Default tests use in-memory fakes (queue full, cancel, panic, parallel
-workers, EventRouter). Hardware-in-the-loop adapters belong in the host
-application or optional feature crates.
+workers, EventRouter, 56-washer fleet). Hardware-in-the-loop adapters belong
+in the host application or optional feature crates.
 
 ## License
 
