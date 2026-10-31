@@ -81,11 +81,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("listener timed out")?;
 
     match (&action_out, &listen_out) {
-        (
-            FlowOutcome::Completed(Value::Int(1)),
-            FlowOutcome::Completed(Value::Message(msg)),
-        ) if msg.tag == event_tag::INBOUND_CREDIT
-            && matches!(msg.payload.as_ref(), Value::Int(250)) =>
+        (FlowOutcome::Completed(Value::Int(1)), FlowOutcome::Completed(Value::Message(msg)))
+            if msg.tag == event_tag::INBOUND_CREDIT
+                && matches!(msg.payload.as_ref(), Value::Int(250)) =>
         {
             println!("composite: GPIO dispatched; START_ACTION via bridge; credit on device-02");
         }

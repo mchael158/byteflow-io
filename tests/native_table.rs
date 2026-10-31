@@ -38,7 +38,10 @@ fn standard_native_slots_are_preserved_and_io_slots_are_appended() {
         Some(native_index::MSG_REQUEST_ID)
     );
     assert_eq!(table.index_of("msg_tag"), Some(native_index::MSG_TAG));
-    assert_eq!(table.index_of("msg_payload"), Some(native_index::MSG_PAYLOAD));
+    assert_eq!(
+        table.index_of("msg_payload"),
+        Some(native_index::MSG_PAYLOAD)
+    );
     assert_eq!(
         table.index_of("msg_reply_cap"),
         Some(native_index::MSG_REPLY_CAP)
@@ -115,10 +118,7 @@ fn queued_driver_is_bounded_and_returns_before_device_execution() {
         QueuedIoDriver::new(1, handler).expect("bounded driver should build");
 
     let first = driver
-        .try_submit(IoCommand::GpioWrite {
-            pin: 4,
-            high: true,
-        })
+        .try_submit(IoCommand::GpioWrite { pin: 4, high: true })
         .expect("first command should fit");
     assert_eq!(first, 1);
 
@@ -127,20 +127,16 @@ fn queued_driver_is_bounded_and_returns_before_device_execution() {
         high: false,
     });
     assert_eq!(
-        second.expect_err("second command must not wait for queue space").kind(),
+        second
+            .expect_err("second command must not wait for queue space")
+            .kind(),
         IoErrorKind::QueueFull
     );
     assert_eq!(driver.metrics().snapshot().rejected_full, 1);
 
     let queued = receiver.try_recv().expect("first command should be queued");
     assert_eq!(queued.id, first);
-    assert_eq!(
-        queued.command,
-        IoCommand::GpioWrite {
-            pin: 4,
-            high: true
-        }
-    );
+    assert_eq!(queued.command, IoCommand::GpioWrite { pin: 4, high: true });
 }
 
 #[test]
@@ -186,7 +182,9 @@ struct EchoAwaitDriver;
 
 impl IoDriver for EchoAwaitDriver {
     fn try_submit(&self, _command: IoCommand) -> Result<u64, IoDriverError> {
-        Err(IoDriverError::unsupported("fast commands are not used by this test"))
+        Err(IoDriverError::unsupported(
+            "fast commands are not used by this test",
+        ))
     }
 
     fn execute_host_await(
@@ -272,7 +270,10 @@ impl HoldGate {
     }
 
     fn wait_release(&self, cancel: &byteflow_io::CancellationToken) -> Result<(), IoDriverError> {
-        let mut guard = self.release.lock().map_err(|_| IoDriverError::poisoned("poison"))?;
+        let mut guard = self
+            .release
+            .lock()
+            .map_err(|_| IoDriverError::poisoned("poison"))?;
         while !*guard {
             if cancel.is_cancelled() {
                 return Err(IoDriverError::cancelled("cancelled while held"));
@@ -486,12 +487,7 @@ fn event_router_delivers_a_message_hop() -> Result<(), Box<dyn std::error::Error
     let runtime = Arc::new(Runtime::new(program.build())?);
     let handle = runtime.spawn(0, &[])?;
     let events = EventRouter::new(Arc::clone(&runtime));
-    events.send(
-        handle.id(),
-        1001,
-        event_tag::COIN_INSERTED,
-        Value::Int(500),
-    )?;
+    events.send(handle.id(), 1001, event_tag::COIN_INSERTED, Value::Int(500))?;
 
     let outcome = handle
         .join_timeout(Duration::from_secs(2))
@@ -621,8 +617,7 @@ fn parallel_workers_can_run_two_awaits() -> Result<(), Box<dyn std::error::Error
     for outcome in [&a_out, &b_out] {
         match outcome {
             FlowOutcome::Completed(Value::Message(msg))
-                if msg.tag == TAG_SYS_AWAIT
-                    && matches!(msg.payload.as_ref(), Value::Int(3)) => {}
+                if msg.tag == TAG_SYS_AWAIT && matches!(msg.payload.as_ref(), Value::Int(3)) => {}
             other => return Err(format!("expected hop 3, got {other:?}").into()),
         }
     }

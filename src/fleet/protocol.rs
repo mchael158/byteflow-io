@@ -29,9 +29,15 @@ pub mod custom_op {
 /// Command toward an edge device (ESP32, MCU, relay board, …).
 #[derive(Clone, Debug, PartialEq)]
 pub enum DeviceCommand {
-    StartAction { device: DeviceId },
-    AbortAction { device: DeviceId },
-    QueryStatus { device: DeviceId },
+    StartAction {
+        device: DeviceId,
+    },
+    AbortAction {
+        device: DeviceId,
+    },
+    QueryStatus {
+        device: DeviceId,
+    },
     OtaChunk {
         device: DeviceId,
         seq: u32,
@@ -44,7 +50,10 @@ pub enum DeviceCommand {
         qos: u8,
     },
     /// Arm / credit / unlock with a positive integer unit (cents, tokens, …).
-    ApplyCredit { device: DeviceId, units: i64 },
+    ApplyCredit {
+        device: DeviceId,
+        units: i64,
+    },
 }
 
 fn expect_list<'a>(args: &'a Value, ctx: &str) -> Result<&'a [Value], IoDriverError> {
@@ -77,11 +86,8 @@ impl DeviceCommand {
 
     pub fn credit_args(device: impl Into<DeviceId>, units: i64) -> Value {
         let device = device.into();
-        Value::try_list(vec![
-            Value::Int(i64::from(device.get())),
-            Value::Int(units),
-        ])
-        .unwrap_or(Value::Unit)
+        Value::try_list(vec![Value::Int(i64::from(device.get())), Value::Int(units)])
+            .unwrap_or(Value::Unit)
     }
 
     pub fn mqtt_wait_args(
@@ -123,7 +129,9 @@ impl DeviceCommand {
         let seq = list[1]
             .as_int()
             .and_then(|n| u32::try_from(n).ok())
-            .ok_or_else(|| IoDriverError::invalid_args("DEVICE_OTA_CHUNK seq must be a non-negative Int"))?;
+            .ok_or_else(|| {
+                IoDriverError::invalid_args("DEVICE_OTA_CHUNK seq must be a non-negative Int")
+            })?;
         let bytes = list[2]
             .as_bytes()
             .map(|b| b.to_vec())
@@ -156,17 +164,19 @@ impl DeviceCommand {
                 "MQTT_PUBLISH_AND_WAIT_ACK expects List [device, topic, payload, qos]",
             ));
         }
-        let device = DeviceId::from_value(&list[0], max_devices)
-            .ok_or_else(|| IoDriverError::invalid_args("MQTT_PUBLISH_AND_WAIT_ACK device id invalid"))?;
-        let topic = list[1]
-            .as_str()
-            .map(str::to_owned)
-            .ok_or_else(|| IoDriverError::invalid_args("MQTT_PUBLISH_AND_WAIT_ACK topic must be Str"))?;
+        let device = DeviceId::from_value(&list[0], max_devices).ok_or_else(|| {
+            IoDriverError::invalid_args("MQTT_PUBLISH_AND_WAIT_ACK device id invalid")
+        })?;
+        let topic = list[1].as_str().map(str::to_owned).ok_or_else(|| {
+            IoDriverError::invalid_args("MQTT_PUBLISH_AND_WAIT_ACK topic must be Str")
+        })?;
         let payload = list[2].clone();
         let qos = list[3]
             .as_int()
             .and_then(|n| u8::try_from(n).ok())
-            .ok_or_else(|| IoDriverError::invalid_args("MQTT_PUBLISH_AND_WAIT_ACK qos must be 0..=2"))?;
+            .ok_or_else(|| {
+                IoDriverError::invalid_args("MQTT_PUBLISH_AND_WAIT_ACK qos must be 0..=2")
+            })?;
         if qos > 2 {
             return Err(IoDriverError::invalid_args(
                 "MQTT_PUBLISH_AND_WAIT_ACK qos must be 0, 1, or 2",

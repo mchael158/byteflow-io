@@ -174,7 +174,7 @@ impl IoDriver for QueuedIoDriver {
         // possible if try_send fails afterwards; see struct docs.
         let id = self
             .next_id
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
                 current.checked_add(1)
             })
             .map_err(|_| IoDriverError::exhausted("I/O command ID space exhausted"))?;

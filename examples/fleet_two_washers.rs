@@ -7,9 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use byteflow::{FlowOutcome, NullSink, Program, Runtime, Value};
-use byteflow_io::fleet::{
-    bootstrap, event_tag, host_op, DeviceCommand, DeviceState, FleetProfile,
-};
+use byteflow_io::fleet::{bootstrap, event_tag, host_op, DeviceCommand, DeviceState, FleetProfile};
 use byteflow_io::{build_native_table, EventRouter, IoConfig};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -55,12 +53,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     fleet.bind(device_b, listen_handle.id())?;
 
     let events = EventRouter::new(Arc::clone(&runtime));
-    fleet.deliver_event(
-        &events,
-        device_b,
-        event_tag::COIN_INSERTED,
-        Value::Int(500),
-    )?;
+    fleet.deliver_event(&events, device_b, event_tag::COIN_INSERTED, Value::Int(500))?;
 
     let action_out = action_handle
         .join_timeout(Duration::from_secs(2))
@@ -72,11 +65,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = DeviceCommand::credit_args(device_a, 500);
 
     match (&action_out, &listen_out) {
-        (
-            FlowOutcome::Completed(Value::Int(1)),
-            FlowOutcome::Completed(Value::Message(msg)),
-        ) if msg.tag == event_tag::COIN_INSERTED
-            && matches!(msg.payload.as_ref(), Value::Int(500)) =>
+        (FlowOutcome::Completed(Value::Int(1)), FlowOutcome::Completed(Value::Message(msg)))
+            if msg.tag == event_tag::COIN_INSERTED
+                && matches!(msg.payload.as_ref(), Value::Int(500)) =>
         {
             println!(
                 "{} action started; {} received coin=500",

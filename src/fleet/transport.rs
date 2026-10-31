@@ -87,7 +87,9 @@ impl InMemoryDeviceTransport {
                 return Err(IoDriverError::cancelled("device operation cancelled"));
             }
             if Instant::now() >= deadline {
-                return Err(IoDriverError::deadline("device operation deadline exceeded"));
+                return Err(IoDriverError::deadline(
+                    "device operation deadline exceeded",
+                ));
             }
             std::thread::sleep(
                 Duration::from_millis(5).min(end.saturating_duration_since(Instant::now())),
@@ -97,7 +99,9 @@ impl InMemoryDeviceTransport {
             return Err(IoDriverError::cancelled("device operation cancelled"));
         }
         if Instant::now() >= deadline {
-            return Err(IoDriverError::deadline("device operation deadline exceeded"));
+            return Err(IoDriverError::deadline(
+                "device operation deadline exceeded",
+            ));
         }
         Ok(())
     }
@@ -158,11 +162,7 @@ impl DeviceTransport for InMemoryDeviceTransport {
                 let slot = self.fleet.lookup(*device).map_err(map_fleet_err)?;
                 Ok(Value::Int(i64::from(slot.state)))
             }
-            DeviceCommand::OtaChunk {
-                device,
-                seq,
-                bytes,
-            } => {
+            DeviceCommand::OtaChunk { device, seq, bytes } => {
                 if bytes.is_empty() {
                     return Err(IoDriverError::invalid_args("OTA chunk must not be empty"));
                 }

@@ -61,12 +61,7 @@ fn deliver_event_requires_bound_flow() -> Result<(), Box<dyn std::error::Error>>
     let events = EventRouter::new(Arc::clone(&runtime));
     let machine = MachineId::new(3).expect("valid");
 
-    let err = fleet.deliver_event(
-        &events,
-        machine,
-        event_tag::COIN_INSERTED,
-        Value::Int(100),
-    );
+    let err = fleet.deliver_event(&events, machine, event_tag::COIN_INSERTED, Value::Int(100));
     assert!(matches!(err, Err(FleetError::Unbound)));
 
     drop(events);
@@ -209,12 +204,7 @@ fn event_router_coin_to_bound_washer() -> Result<(), Box<dyn std::error::Error>>
     fleet.bind(machine, handle.id())?;
 
     let events = EventRouter::new(Arc::clone(&runtime));
-    fleet.deliver_event(
-        &events,
-        machine,
-        event_tag::COIN_INSERTED,
-        Value::Int(250),
-    )?;
+    fleet.deliver_event(&events, machine, event_tag::COIN_INSERTED, Value::Int(250))?;
 
     let outcome = handle
         .join_timeout(Duration::from_secs(2))

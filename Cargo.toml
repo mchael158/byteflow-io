@@ -2,7 +2,8 @@
 name = "byteflow-io"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.75"
+# Alinhado a byteflow-actors 0.9.21+ (MSRV do runtime).
+rust-version = "1.99.1"
 license = "MIT OR Apache-2.0"
 description = "Host-side I/O integration layer for the Byteflow runtime"
 repository = "https://github.com/mchael158/byteflow-io"

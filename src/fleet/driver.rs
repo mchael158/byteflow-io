@@ -67,16 +67,14 @@ impl FleetDriver {
             .as_any()
             .downcast_ref::<InMemoryDeviceTransport>()
             .ok_or_else(|| {
-                IoDriverError::unsupported(
-                    "fleet driver transport is not InMemoryDeviceTransport",
-                )
+                IoDriverError::unsupported("fleet driver transport is not InMemoryDeviceTransport")
             })?
             .published()
     }
 
     fn alloc_id(&self) -> Result<u64, IoDriverError> {
         self.next_id
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
                 current.checked_add(1)
             })
             .map_err(|_| IoDriverError::exhausted("fleet command ID space exhausted"))
@@ -171,11 +169,7 @@ impl IoDriver for FleetDriver {
             }
             host_op::DEVICE_OTA_CHUNK => {
                 let (device, seq, bytes) = DeviceCommand::parse_ota_chunk(&args, max)?;
-                DeviceCommand::OtaChunk {
-                    device,
-                    seq,
-                    bytes,
-                }
+                DeviceCommand::OtaChunk { device, seq, bytes }
             }
             host_op::APPLY_CREDIT => {
                 let (device, units) = DeviceCommand::parse_credit(&args, max)?;
@@ -197,8 +191,7 @@ impl IoDriver for FleetDriver {
             }
         };
 
-        self.transport
-            .publish_and_wait(&command, cancel, deadline)
+        self.transport.publish_and_wait(&command, cancel, deadline)
     }
 
     fn shutdown(&self) -> Result<(), IoDriverError> {

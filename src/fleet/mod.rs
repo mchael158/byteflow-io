@@ -20,6 +20,7 @@
 mod device;
 mod dispatch;
 mod driver;
+mod esp32_sim;
 mod profile;
 mod protocol;
 mod topics;
@@ -28,6 +29,7 @@ mod transport;
 pub use device::{DeviceId, DeviceSlot, DeviceState, FleetError, FleetRegistry, SharedFleet};
 pub use dispatch::{dispatch_queued_command, QueuedDispatch};
 pub use driver::{FleetDriver, DEFAULT_DEVICE_DEADLINE};
+pub use esp32_sim::{announce_online, drain_once, poll, spawn_firmware_thread, SimDrainOutcome};
 pub use profile::{FleetProfile, ProfileError};
 pub use protocol::{custom_op, event_tag, host_op, DeviceCommand};
 pub use topics::{ack, cmd, ota, parse_device, status};
@@ -38,8 +40,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::{
-    ByteflowIo, CancellationToken, IoConfig, IoDriver, IoDriverError, IoInitError,
-    IoCommandReceiver, QueuedIoDriver,
+    ByteflowIo, CancellationToken, IoCommandReceiver, IoConfig, IoDriver, IoDriverError,
+    IoInitError, QueuedIoDriver,
 };
 
 /// Default bounded capacity for the fast command queue in [`bootstrap_composite`].
@@ -80,7 +82,10 @@ pub fn bootstrap_with_delay(
     config: IoConfig,
     delay: Duration,
 ) -> Result<(ByteflowIo, SharedFleet, Arc<FleetDriver>), BootstrapError> {
-    let FleetStack { fleet, fleet_driver } = build_fleet_stack(profile, delay)?;
+    let FleetStack {
+        fleet,
+        fleet_driver,
+    } = build_fleet_stack(profile, delay)?;
     let io = ByteflowIo::new(Arc::clone(&fleet_driver) as Arc<dyn IoDriver>, config)?;
     Ok((io, fleet, fleet_driver))
 }
@@ -94,15 +99,7 @@ pub fn bootstrap_composite(
     profile: FleetProfile,
     config: IoConfig,
     queue_capacity: usize,
-) -> Result<
-    (
-        ByteflowIo,
-        SharedFleet,
-        IoCommandReceiver,
-        Arc<FleetDriver>,
-    ),
-    BootstrapError,
-> {
+) -> Result<(ByteflowIo, SharedFleet, IoCommandReceiver, Arc<FleetDriver>), BootstrapError> {
     bootstrap_composite_with_delay(profile, config, queue_capacity, Duration::ZERO)
 }
 
@@ -112,16 +109,11 @@ pub fn bootstrap_composite_with_delay(
     config: IoConfig,
     queue_capacity: usize,
     delay: Duration,
-) -> Result<
-    (
-        ByteflowIo,
-        SharedFleet,
-        IoCommandReceiver,
-        Arc<FleetDriver>,
-    ),
-    BootstrapError,
-> {
-    let FleetStack { fleet, fleet_driver } = build_fleet_stack(profile, delay)?;
+) -> Result<(ByteflowIo, SharedFleet, IoCommandReceiver, Arc<FleetDriver>), BootstrapError> {
+    let FleetStack {
+        fleet,
+        fleet_driver,
+    } = build_fleet_stack(profile, delay)?;
     let (queued, receiver) = QueuedIoDriver::new(queue_capacity, Arc::clone(&fleet_driver))?;
     let io = ByteflowIo::new(Arc::clone(&queued) as Arc<dyn IoDriver>, config)?;
     Ok((io, fleet, receiver, fleet_driver))

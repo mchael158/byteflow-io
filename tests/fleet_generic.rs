@@ -58,11 +58,8 @@ fn custom_small_fleet_capacity() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn composite_dispatch_routes_gpio_to_host() -> Result<(), Box<dyn std::error::Error>> {
-    let (io, _fleet, receiver, fleet_driver) = bootstrap_composite(
-        FleetProfile::generic_site(),
-        IoConfig::default(),
-        4,
-    )?;
+    let (io, _fleet, receiver, fleet_driver) =
+        bootstrap_composite(FleetProfile::generic_site(), IoConfig::default(), 4)?;
     io.driver().try_submit(IoCommand::GpioWrite {
         pin: 7,
         high: false,
@@ -80,8 +77,7 @@ fn composite_dispatch_routes_gpio_to_host() -> Result<(), Box<dyn std::error::Er
 }
 
 #[test]
-fn composite_dispatch_mqtt_reaches_in_memory_transport() -> Result<(), Box<dyn std::error::Error>>
-{
+fn composite_dispatch_mqtt_reaches_in_memory_transport() -> Result<(), Box<dyn std::error::Error>> {
     let (io, fleet, receiver, fleet_driver) = bootstrap_composite(
         FleetProfile::generic_site(),
         IoConfig::default(),
@@ -108,11 +104,8 @@ fn composite_dispatch_mqtt_reaches_in_memory_transport() -> Result<(), Box<dyn s
 
 #[test]
 fn composite_host_await_start_action_from_bytecode() -> Result<(), Box<dyn std::error::Error>> {
-    let (io, fleet, _receiver, _fleet_driver) = bootstrap_composite(
-        FleetProfile::generic_site(),
-        IoConfig::default(),
-        8,
-    )?;
+    let (io, fleet, _receiver, _fleet_driver) =
+        bootstrap_composite(FleetProfile::generic_site(), IoConfig::default(), 8)?;
     let device = fleet.device_id(1).expect("valid");
     fleet.set_state(device, DeviceState::Armed)?;
 
@@ -163,12 +156,7 @@ fn deliver_event_reaches_bound_flow() -> Result<(), Box<dyn std::error::Error>> 
     fleet.bind(device, handle.id())?;
 
     let events = EventRouter::new(Arc::clone(&runtime));
-    fleet.deliver_event(
-        &events,
-        device,
-        event_tag::ACTION_COMPLETED,
-        Value::Int(99),
-    )?;
+    fleet.deliver_event(&events, device, event_tag::ACTION_COMPLETED, Value::Int(99))?;
 
     let outcome = handle
         .join_timeout(Duration::from_secs(2))
@@ -190,18 +178,12 @@ fn deliver_event_reaches_bound_flow() -> Result<(), Box<dyn std::error::Error>> 
 
 #[test]
 fn composite_shutdown_rejects_fast_submit() -> Result<(), Box<dyn std::error::Error>> {
-    let (io, _fleet, _receiver, _fleet_driver) = bootstrap_composite(
-        FleetProfile::generic_site(),
-        IoConfig::default(),
-        4,
-    )?;
+    let (io, _fleet, _receiver, _fleet_driver) =
+        bootstrap_composite(FleetProfile::generic_site(), IoConfig::default(), 4)?;
     io.shutdown()?;
     let err = io
         .driver()
-        .try_submit(IoCommand::GpioWrite {
-            pin: 1,
-            high: true,
-        })
+        .try_submit(IoCommand::GpioWrite { pin: 1, high: true })
         .expect_err("closed composite driver");
     assert_eq!(err.kind(), byteflow_io::IoErrorKind::QueueClosed);
     Ok(())

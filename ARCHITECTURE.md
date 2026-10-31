@@ -72,7 +72,7 @@ host integration                runtime / core
 | `events` | `EventRouter` (`Arc<Runtime>`) for trusted host → flow delivery |
 | `metrics` | Submit / full / settle counters |
 | `samples` | Non-normative `host_op` / `event_tag` constants |
-| `fleet` | Registry, transport, driver, [`dispatch_queued_command`](src/fleet/dispatch.rs), composite bootstrap |
+| `fleet` | Registry, transport, driver, [`dispatch_queued_command`](src/fleet/dispatch.rs), composite bootstrap, [`esp32_sim`](src/fleet/esp32_sim.rs) dry-run loop |
 | `laundry` | Thin washer profile / aliases over `fleet` (optional) |
 | `error` | Init, native-table, and typed [`IoDriverError`](src/error.rs) kinds |
 

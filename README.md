@@ -36,7 +36,22 @@ depends on this crate.
 
 ## Compatibility
 
-Requires **`byteflow-actors` 0.9.21+** (lib name `byteflow`).
+**Rust 1.99.1+** e **`byteflow-actors` 0.9.21+** (import `byteflow`).
+
+O repositório inclui [`rust-toolchain.toml`](rust-toolchain.toml) (`channel = "1.99.1"`);
+dentro da pasta o `cargo`/`rustc` usam essa versão automaticamente via rustup.
+
+Globalmente:
+
+```powershell
+rustup default 1.99.1-x86_64-pc-windows-msvc
+# ou, quando `rustup update stable` funcionar de novo:
+rustup update stable && rustup default stable
+rustc --version   # >= 1.99.1
+```
+
+Se `rustup update stable` falhar por `rust-src` corrompido, instale ou selecione
+`1.99.1` como acima; paliativo: `cargo build --ignore-rust-version`.
 
 ```toml
 [dependencies]
@@ -189,6 +204,16 @@ HostAwait must run through the runtime bridge (`f.host_await` / [`ByteflowIo::ru
 
 For HostAwait-only sites (no GPIO/UART natives), [`fleet::bootstrap`](src/fleet/mod.rs) is enough.
 
+### Simulador ESP32 no PC (sem hardware)
+
+[`InMemoryDeviceTransport`](src/fleet/transport.rs) imita ACK/estado do firmware; [`esp32_sim`](src/fleet/esp32_sim.rs) roda a thread “sketch” que drena a fila composite. Exemplo:
+
+```sh
+cargo run --example esp32_simulator
+```
+
+Com **Wokwi/QEMU** e firmware real: Byteflow fica no PC; o ESP publica MQTT no broker; você implementa [`DeviceTransport`](src/fleet/transport.rs) apontando para esse broker (sem mudar o runtime).
+
 [`laundry`](src/laundry) is only a thin washer profile (`MachineId`,
 `laundry/washer/…` topics) on top of `fleet` — not the core of the crate.
 
@@ -199,6 +224,7 @@ cargo test --all-targets
 cargo run --example host_await_echo
 cargo run --example fleet_two_washers
 cargo run --example fleet_queued_host
+cargo run --example esp32_simulator
 ```
 
 Default tests use in-memory fakes (queue full, cancel, panic, parallel

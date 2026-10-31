@@ -201,10 +201,7 @@ impl FleetRegistry {
         let device = device.into();
         self.ensure_known(device)?;
         let slots = self.slots.lock().map_err(|_| FleetError::Poisoned)?;
-        slots
-            .get(&device)
-            .cloned()
-            .ok_or(FleetError::InvalidDevice)
+        slots.get(&device).cloned().ok_or(FleetError::InvalidDevice)
     }
 
     pub fn set_state(
