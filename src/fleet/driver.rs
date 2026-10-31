@@ -97,7 +97,7 @@ impl FleetDriver {
             IoCommand::MqttPublish {
                 topic,
                 payload,
-                qos: _,
+                qos,
             } => {
                 let device = topics::parse_device(self.fleet.profile(), topic).ok_or_else(|| {
                     IoDriverError::invalid_args(format!(
@@ -105,11 +105,16 @@ impl FleetDriver {
                         self.fleet.profile().topic_root
                     ))
                 })?;
+                if *qos > 2 {
+                    return Err(IoDriverError::invalid_args(
+                        "MQTT publish qos must be 0, 1, or 2",
+                    ));
+                }
                 Ok(DeviceCommand::MqttPublishWaitAck {
                     device,
                     topic: topic.clone(),
                     payload: payload.clone(),
-                    qos: 0,
+                    qos: *qos,
                 })
             }
             IoCommand::Custom { op, args } => match *op {
@@ -148,8 +153,9 @@ impl IoDriver for FleetDriver {
     fn try_submit(&self, command: IoCommand) -> Result<u64, IoDriverError> {
         self.ensure_open()?;
         let cmd = self.map_fast_command(&command)?;
+        let id = self.alloc_id()?;
         self.transport.enqueue(&cmd)?;
-        self.alloc_id()
+        Ok(id)
     }
 
     fn execute_host_await(

@@ -34,7 +34,7 @@ pub trait DeviceTransport: Send + Sync + fmt::Debug + 'static {
 fn map_fleet_err(err: FleetError) -> IoDriverError {
     match err {
         FleetError::Poisoned => IoDriverError::poisoned(err.to_string()),
-        FleetError::InvalidDevice | FleetError::Unbound => {
+        FleetError::InvalidDevice | FleetError::Unbound | FleetError::AlreadyBound => {
             IoDriverError::invalid_args(err.to_string())
         }
         FleetError::Send(_) | FleetError::Profile(_) => IoDriverError::other(err.to_string()),

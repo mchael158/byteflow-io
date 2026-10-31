@@ -12,9 +12,9 @@ keywords = ["byteflow", "embedded", "io", "host-await", "runtime"]
 categories = ["concurrency", "embedded", "api-bindings"]
 
 [dependencies]
-# byteflow-actors 0.9.21+ (Rust import: `byteflow`).
+# byteflow-actors 0.9.21+ (Rust import: `byteflow`). Bump `rev` with lockfile when upgrading.
 # Workspace embedding: byteflow-actors = { path = "../byteflow" }
-byteflow-actors = { git = "https://github.com/mchael158/byteflow-actors.git" }
+byteflow-actors = { git = "https://github.com/mchael158/byteflow-actors.git", rev = "42ab6d54280cedbe9ed2146d90c43a04b828f467" }
 
 [dev-dependencies]
 

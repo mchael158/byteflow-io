@@ -6,7 +6,7 @@ use std::time::Duration;
 use byteflow::{FlowOutcome, NullSink, Program, Runtime, Value};
 use byteflow_io::fleet::{
     bootstrap, bootstrap_composite, dispatch_queued_command, event_tag, host_op, DeviceCommand,
-    DeviceState, FleetProfile, QueuedDispatch, DEFAULT_FAST_QUEUE_CAPACITY,
+    DeviceState, FleetError, FleetProfile, QueuedDispatch, DEFAULT_FAST_QUEUE_CAPACITY,
 };
 use byteflow_io::{build_native_table, EventRouter, IoCommand, IoConfig};
 
@@ -186,5 +186,25 @@ fn composite_shutdown_rejects_fast_submit() -> Result<(), Box<dyn std::error::Er
         .try_submit(IoCommand::GpioWrite { pin: 1, high: true })
         .expect_err("closed composite driver");
     assert_eq!(err.kind(), byteflow_io::IoErrorKind::QueueClosed);
+    Ok(())
+}
+
+#[test]
+fn bind_rejects_second_flow_without_unbind() -> Result<(), Box<dyn std::error::Error>> {
+    let (io, fleet, _) = bootstrap(FleetProfile::generic_site(), IoConfig::default())?;
+    let mut program = Program::new("bind-twice");
+    program.function("noop", 0, |f| {
+        let n = f.load_i32(1);
+        f.return_(n);
+    });
+    let natives = build_native_table(io.driver().clone(), Arc::new(NullSink))?;
+    let runtime = Arc::new(Runtime::with_natives(program.build(), natives)?);
+    let h1 = runtime.spawn(0, &[])?;
+    let h2 = runtime.spawn(0, &[])?;
+    let device = fleet.device_id(1).expect("valid");
+    fleet.bind(device, h1.id())?;
+    let err = fleet.bind(device, h2.id()).expect_err("second bind");
+    assert!(matches!(err, FleetError::AlreadyBound));
+    io.shutdown()?;
     Ok(())
 }

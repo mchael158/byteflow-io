@@ -120,3 +120,41 @@ pub fn bootstrap_with_delay(
 ) -> Result<(ByteflowIo, SharedFleet, Arc<LaundryEspDriver>), fleet::BootstrapError> {
     fleet::bootstrap_with_delay(FleetProfile::laundry_washers(), config, delay)
 }
+
+/// Laundry profile + composite fast queue (GPIO/UART on device thread + fleet HostAwait).
+pub fn bootstrap_composite(
+    config: IoConfig,
+    queue_capacity: usize,
+) -> Result<
+    (
+        ByteflowIo,
+        SharedFleet,
+        crate::IoCommandReceiver,
+        Arc<LaundryEspDriver>,
+    ),
+    fleet::BootstrapError,
+> {
+    fleet::bootstrap_composite(FleetProfile::laundry_washers(), config, queue_capacity)
+}
+
+/// Same as [`bootstrap_composite`], with artificial transport delay.
+pub fn bootstrap_composite_with_delay(
+    config: IoConfig,
+    queue_capacity: usize,
+    delay: Duration,
+) -> Result<
+    (
+        ByteflowIo,
+        SharedFleet,
+        crate::IoCommandReceiver,
+        Arc<LaundryEspDriver>,
+    ),
+    fleet::BootstrapError,
+> {
+    fleet::bootstrap_composite_with_delay(
+        FleetProfile::laundry_washers(),
+        config,
+        queue_capacity,
+        delay,
+    )
+}

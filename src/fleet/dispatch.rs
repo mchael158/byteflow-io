@@ -78,4 +78,35 @@ mod tests {
         assert_eq!(driver.in_memory_published()?.len(), 1);
         Ok(())
     }
+
+    #[test]
+    fn mqtt_fast_path_preserves_qos() -> Result<(), Box<dyn std::error::Error>> {
+        let profile = FleetProfile::generic_site();
+        let fleet = Arc::new(FleetRegistry::new(profile.clone())?);
+        let transport = InMemoryDeviceTransport::new(Arc::clone(&fleet));
+        let driver = FleetDriver::new(Arc::clone(&fleet), transport);
+        let device = fleet.device_id(1).expect("valid");
+        let topic = cmd(&profile, device);
+
+        let queued = QueuedCommand {
+            id: 1,
+            command: IoCommand::MqttPublish {
+                topic,
+                payload: byteflow::Value::Int(1),
+                qos: 2,
+            },
+        };
+        dispatch_queued_command(&driver, queued)?;
+        let published = driver.in_memory_published()?;
+        assert_eq!(published.len(), 1);
+        assert!(
+            matches!(
+                &published[0],
+                super::super::protocol::DeviceCommand::MqttPublishWaitAck { qos: 2, .. }
+            ),
+            "expected qos=2, got {:?}",
+            published[0]
+        );
+        Ok(())
+    }
 }

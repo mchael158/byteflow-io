@@ -101,6 +101,8 @@ impl Default for DeviceSlot {
 pub enum FleetError {
     InvalidDevice,
     Unbound,
+    /// [`FleetRegistry::bind`] was called while a flow is already bound.
+    AlreadyBound,
     Send(SendError),
     Poisoned,
     Profile(ProfileError),
@@ -111,6 +113,7 @@ impl fmt::Display for FleetError {
         match self {
             Self::InvalidDevice => write!(f, "device id out of range for this fleet profile"),
             Self::Unbound => write!(f, "no flow is bound to this device"),
+            Self::AlreadyBound => write!(f, "device already has a bound flow; unbind first"),
             Self::Send(err) => write!(f, "fleet event delivery failed: {err}"),
             Self::Poisoned => write!(f, "fleet registry mutex is poisoned"),
             Self::Profile(err) => write!(f, "{err}"),
@@ -181,6 +184,9 @@ impl FleetRegistry {
         self.ensure_known(device)?;
         let mut slots = self.slots.lock().map_err(|_| FleetError::Poisoned)?;
         let slot = slots.get_mut(&device).ok_or(FleetError::InvalidDevice)?;
+        if slot.flow.is_some() {
+            return Err(FleetError::AlreadyBound);
+        }
         slot.flow = Some(flow);
         if slot.state == DeviceState::Offline {
             slot.state = DeviceState::Idle;

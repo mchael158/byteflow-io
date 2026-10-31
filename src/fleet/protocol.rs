@@ -63,6 +63,10 @@ fn expect_list<'a>(args: &'a Value, ctx: &str) -> Result<&'a [Value], IoDriverEr
     }
 }
 
+fn expect_list_value(values: Vec<Value>) -> Value {
+    Value::try_list(values).expect("device command arg list within VM list limits")
+}
+
 impl DeviceCommand {
     pub fn start_args(device: impl Into<DeviceId>) -> Value {
         let device = device.into();
@@ -76,18 +80,16 @@ impl DeviceCommand {
 
     pub fn ota_chunk_args(device: impl Into<DeviceId>, seq: u32, bytes: Vec<u8>) -> Value {
         let device = device.into();
-        Value::try_list(vec![
+        expect_list_value(vec![
             Value::Int(i64::from(device.get())),
             Value::Int(i64::from(seq)),
             Value::bytes(bytes),
         ])
-        .unwrap_or(Value::Unit)
     }
 
     pub fn credit_args(device: impl Into<DeviceId>, units: i64) -> Value {
         let device = device.into();
-        Value::try_list(vec![Value::Int(i64::from(device.get())), Value::Int(units)])
-            .unwrap_or(Value::Unit)
+        expect_list_value(vec![Value::Int(i64::from(device.get())), Value::Int(units)])
     }
 
     pub fn mqtt_wait_args(
@@ -97,13 +99,12 @@ impl DeviceCommand {
         qos: u8,
     ) -> Value {
         let device = device.into();
-        Value::try_list(vec![
+        expect_list_value(vec![
             Value::Int(i64::from(device.get())),
             Value::str(topic.into()),
             payload,
             Value::Int(i64::from(qos)),
         ])
-        .unwrap_or(Value::Unit)
     }
 
     pub fn parse_start(args: &Value, max_devices: u8) -> Result<DeviceId, IoDriverError> {
