@@ -53,7 +53,7 @@ pub fn build_native_table(
         (std_native::NOW_MS, "now_ms"),
         (std_native::MAKE_MSG, "make_msg"),
         (std_native::MSG_SENDER, "msg_sender"),
-        (std_native::MSG_REQUEST_ID, "msg_request_id")
+        (std_native::MSG_REQUEST_ID, "msg_request_id"),
         (std_native::MSG_TAG, "msg_tag"),
         (std_native::MSG_PAYLOAD, "msg_payload"),
         (std_native::MSG_REPLY_CAP, "msg_reply_cap"),

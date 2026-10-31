@@ -1,6 +1,6 @@
 [package]
 name = "byteflow-io"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 # Alinhado a byteflow-actors 0.9.21+ (MSRV do runtime).
 rust-version = "1.99.1"
