@@ -55,8 +55,8 @@ Se `rustup update stable` falhar por `rust-src` corrompido, instale ou selecione
 
 ```toml
 [dependencies]
-byteflow-actors = { git = "https://github.com/mchael158/byteflow-actors.git" }
-byteflow-io = { git = "https://github.com/mchael158/byteflow-io.git" }
+byteflow-actors = "0.9.21"
+byteflow-io = "0.1"
 ```
 
 Inside a Byteflow workspace:

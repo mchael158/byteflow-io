@@ -5,16 +5,29 @@ edition = "2021"
 # Alinhado a byteflow-actors 0.9.21+ (MSRV do runtime).
 rust-version = "1.99.1"
 license = "MIT OR Apache-2.0"
+authors = ["Byteflow Contributors"]
 description = "Host-side I/O integration layer for the Byteflow runtime"
 repository = "https://github.com/mchael158/byteflow-io"
+homepage = "https://github.com/mchael158/byteflow-io"
+documentation = "https://docs.rs/byteflow-io"
 readme = "README.md"
 keywords = ["byteflow", "embedded", "io", "host-await", "runtime"]
 categories = ["concurrency", "embedded", "api-bindings"]
+include = [
+    "src/**/*",
+    "examples/**/*",
+    "tests/**/*",
+    "README.md",
+    "ARCHITECTURE.md",
+    "Cargo.toml",
+    "LICENSE*",
+    "rust-toolchain.toml",
+]
 
 [dependencies]
-# byteflow-actors 0.9.21+ (Rust import: `byteflow`). Bump `rev` with lockfile when upgrading.
-# Workspace embedding: byteflow-actors = { path = "../byteflow" }
-byteflow-actors = { git = "https://github.com/mchael158/byteflow-actors.git", rev = "42ab6d54280cedbe9ed2146d90c43a04b828f467" }
+# Crates.io: `byteflow-actors` 0.9.21+ (Rust import: `byteflow`).
+# Dev path: byteflow-actors = { path = "../byteflow" }
+byteflow-actors = "0.9.21"
 
 [dev-dependencies]
 
